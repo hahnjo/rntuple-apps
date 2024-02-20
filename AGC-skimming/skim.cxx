@@ -5,14 +5,17 @@
 #include <ROOT/RNTupleModel.hxx>
 #include <ROOT/RNTupleParallelWriter.hxx>
 #include <ROOT/RNTupleReader.hxx>
+#include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RVec.hxx>
 #include <ROOT/TThreadExecutor.hxx>
+#include <TROOT.h>
 
 using ROOT::Experimental::REntry;
 using ROOT::Experimental::RNTupleFillContext;
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
 using ROOT::Experimental::RNTupleReader;
+using ROOT::Experimental::RNTupleWriter;
 
 #include "json.hpp"
 using nlohmann::json;
@@ -20,6 +23,8 @@ using nlohmann::json;
 #include <cstdio>
 #include <fstream>
 #include <functional>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -177,9 +182,67 @@ static void ProcessInput(const std::string &path,
   }
 }
 
+static void WriteOutput(const std::string &process,
+                        const std::string &variation,
+                        const std::vector<std::string> &paths, int threads,
+                        int mode) {
+  std::string filename = process + "." + variation + ".root";
+  int fillWidth = log10(paths.size()) + 1;
+
+  std::mutex m;
+  std::unique_ptr<RNTupleWriter> writer;
+  std::unique_ptr<RNTupleParallelWriter> parallelWriter;
+  if (mode <= 1) {
+    writer = RNTupleWriter::Recreate(CreateModel(), "Events", filename);
+  } else if (mode == 4) {
+    parallelWriter =
+        RNTupleParallelWriter::Recreate(CreateModel(), "Events", filename);
+  }
+
+  if (mode == 0) {
+    if (threads >= 0) {
+      ROOT::EnableImplicitMT(threads);
+    }
+    auto entry = writer->CreateEntry();
+    for (const auto &path : paths) {
+      ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
+    }
+    return;
+  }
+
+  ROOT::TThreadExecutor ex(threads);
+  ex.Foreach(
+      [&](unsigned int idx) {
+        const auto &path = paths[idx];
+        if (mode == 1) {
+          // Create one REntry per thread.
+          auto entry = writer->CreateEntry();
+          ProcessInput(path, entry, [&]() {
+            std::lock_guard g(m);
+            writer->Fill(*entry);
+          });
+        } else if (mode == 2) {
+          // Create one RNTupleWriter per thread, producing one file each.
+          std::stringstream filename;
+          filename << process << "." << variation << ".";
+          filename << std::setfill('0') << std::setw(fillWidth) << idx;
+          filename << ".root";
+          auto writer =
+              RNTupleWriter::Recreate(CreateModel(), "Events", filename.str());
+          auto entry = writer->CreateEntry();
+          ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
+        } else if (mode == 4) {
+          auto context = parallelWriter->CreateFillContext();
+          auto entry = context->CreateEntry();
+          ProcessInput(path, entry, [&]() { context->Fill(*entry); });
+        }
+      },
+      ROOT::TSeqU(paths.size()));
+}
+
 int main(int argc, char *argv[]) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: ./skim nanoaod_inputs.json <threads>\n");
+    fprintf(stderr, "Usage: ./skim nanoaod_inputs.json <threads> <mode>\n");
     return 1;
   }
 
@@ -188,30 +251,26 @@ int main(int argc, char *argv[]) {
   if (argc > 2) {
     threads = atoi(argv[2]);
   }
+  // mode = 0: sequential RNTupleWriter (with IMT)
+  // mode = 1: RNTupleWriter with multiple REntries
+  // mode = 2: one RNTupleWriter per thread, producing one file each
+  // mode = 3: TBufferMerger with one RNTupleWriter per thread (tbd)
+  // mode = 4: RNTupleParallelWriter
+  int mode = 4;
+  if (argc > 3) {
+    mode = atoi(argv[3]);
+  }
 
   std::ifstream f(inputs_path);
   json inputs = json::parse(f);
 
   for (const auto &process : inputs.items()) {
     for (const auto &variation : process.value().items()) {
-      std::string filename = process.key() + "." + variation.key() + ".root";
-      auto writer = RNTupleParallelWriter::Recreate(CreateModel(), "Events",
-                                                    filename);
-
       std::vector<std::string> paths;
       for (const auto &file : variation.value()["files"]) {
         paths.push_back(file["path"].get<std::string>());
       }
-
-      ROOT::TThreadExecutor ex(threads);
-      ex.Foreach(
-          [&](unsigned int idx) {
-            const auto &path = paths[idx];
-            auto context = writer->CreateFillContext();
-            auto entry = context->CreateEntry();
-            ProcessInput(path, entry, [&]() { context->Fill(*entry); });
-          },
-          ROOT::TSeqU(paths.size()));
+      WriteOutput(process.key(), variation.key(), paths, threads, mode);
     }
   }
 
