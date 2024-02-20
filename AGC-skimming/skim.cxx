@@ -8,6 +8,7 @@
 #include <ROOT/RVec.hxx>
 #include <ROOT/TThreadExecutor.hxx>
 
+using ROOT::Experimental::REntry;
 using ROOT::Experimental::RNTupleFillContext;
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
@@ -18,6 +19,7 @@ using nlohmann::json;
 
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -47,7 +49,9 @@ static std::unique_ptr<RNTupleModel> CreateModel() {
   return model;
 }
 
-static void ProcessInput(const std::string &path, RNTupleFillContext &context) {
+static void ProcessInput(const std::string &path,
+                         std::unique_ptr<REntry> &writeEntry,
+                         std::function<void()> fill) {
   auto reader = RNTupleReader::Open(CreateModel(), "Events", path);
   auto readEntry = reader->GetModel().CreateEntry();
 
@@ -75,8 +79,6 @@ static void ProcessInput(const std::string &path, RNTupleFillContext &context) {
   auto readMuon_tightId = readEntry->GetPtr<ROOT::RVec<bool>>("Muon_tightId");
 
   // Get pointers to write values.
-  auto writeEntry = context.CreateEntry();
-
   auto writeElectron_cutBased =
       writeEntry->GetPtr<ROOT::RVec<int>>("Electron_cutBased");
   auto writeElectron_eta =
@@ -171,7 +173,7 @@ static void ProcessInput(const std::string &path, RNTupleFillContext &context) {
       continue;
     }
 
-    context.Fill(*writeEntry);
+    fill();
   }
 }
 
@@ -206,7 +208,8 @@ int main(int argc, char *argv[]) {
           [&](unsigned int idx) {
             const auto &path = paths[idx];
             auto context = writer->CreateFillContext();
-            ProcessInput(path, *context);
+            auto entry = context->CreateEntry();
+            ProcessInput(path, entry, [&]() { context->Fill(*entry); });
           },
           ROOT::TSeqU(paths.size()));
     }
