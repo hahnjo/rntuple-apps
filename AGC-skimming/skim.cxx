@@ -7,6 +7,7 @@
 #include <ROOT/RNTupleReader.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RVec.hxx>
+#include <ROOT/TBufferMerger.hxx>
 #include <ROOT/TThreadExecutor.hxx>
 #include <TROOT.h>
 
@@ -191,9 +192,12 @@ static void WriteOutput(const std::string &process,
 
   std::mutex m;
   std::unique_ptr<RNTupleWriter> writer;
+  std::unique_ptr<ROOT::TBufferMerger> bufferMerger;
   std::unique_ptr<RNTupleParallelWriter> parallelWriter;
   if (mode <= 1) {
     writer = RNTupleWriter::Recreate(CreateModel(), "Events", filename);
+  } else if (mode == 3) {
+    bufferMerger.reset(new ROOT::TBufferMerger(filename.c_str()));
   } else if (mode == 4) {
     parallelWriter =
         RNTupleParallelWriter::Recreate(CreateModel(), "Events", filename);
@@ -231,6 +235,40 @@ static void WriteOutput(const std::string &process,
               RNTupleWriter::Recreate(CreateModel(), "Events", filename.str());
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
+        } else if (mode == 3) {
+          auto file = bufferMerger->GetFile();
+          auto writer = RNTupleWriter::Append(CreateModel(), "Events", *file);
+          auto entry = writer->CreateEntry();
+          ProcessInput(path, entry, [&]() {
+            writer->Fill(*entry);
+            if (writer->GetLastCommitted() > 0) {
+              // Store all pointers from the entry, to later wire them up into
+              // the new entry.
+              std::vector<std::pair<std::string, std::shared_ptr<void>>> ptrs;
+              for (auto &v : *entry) {
+                ptrs.emplace_back(v.GetField().GetFieldName(),
+                                  v.GetPtr<void>());
+              }
+              entry.reset();
+              // Destroy the RNTupleWriter and commit the dataset. This will
+              // also call Write() and thereby trigger merging.
+              writer.reset();
+              // Create a new writer, appending to the now empty file.
+              writer = RNTupleWriter::Append(CreateModel(), "Events", *file);
+              // Create a new enty and rewire all values from the old entry.
+              auto newEntry = writer->GetModel().CreateBareEntry();
+              for (auto &v : ptrs) {
+                newEntry->BindValue(v.first, v.second);
+              }
+              // Move the new entry into the pointer that was originally
+              // passed to ProcessInput.
+              entry = std::move(newEntry);
+            }
+          });
+          // Destroy the RNTupleWriter and commit the dataset. This will also
+          // call Write() and thereby trigger merging.
+          entry.reset();
+          writer.reset();
         } else if (mode == 4) {
           auto context = parallelWriter->CreateFillContext();
           auto entry = context->CreateEntry();
