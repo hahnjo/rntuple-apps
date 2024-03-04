@@ -22,6 +22,7 @@ using ROOT::Experimental::RNTupleWriter;
 using nlohmann::json;
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -203,10 +204,7 @@ static void WriteOutput(const std::string &process,
         RNTupleParallelWriter::Recreate(CreateModel(), "Events", filename);
   }
 
-  if (mode == 0) {
-    if (threads >= 0) {
-      ROOT::EnableImplicitMT(threads);
-    }
+  if (mode <= 0) {
     auto entry = writer->CreateEntry();
     for (const auto &path : paths) {
       ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
@@ -289,6 +287,7 @@ int main(int argc, char *argv[]) {
   if (argc > 2) {
     threads = atoi(argv[2]);
   }
+  // mode = -1: sequential reference version
   // mode = 0: sequential RNTupleWriter (with IMT)
   // mode = 1: RNTupleWriter with multiple REntries
   // mode = 2: one RNTupleWriter per thread, producing one file each
@@ -299,17 +298,41 @@ int main(int argc, char *argv[]) {
     mode = atoi(argv[3]);
   }
 
+  if (threads >= 0 && mode == 0) {
+    ROOT::EnableImplicitMT(threads);
+  }
+  threads = std::abs(threads);
+
+  // Parse input structure and map to output.
   std::ifstream f(inputs_path);
   json inputs = json::parse(f);
 
+  using Paths = std::vector<std::string>;
+  using InputOutput = std::tuple<std::string, std::string, Paths>;
+  std::vector<InputOutput> inputOutputs;
   for (const auto &process : inputs.items()) {
     for (const auto &variation : process.value().items()) {
       std::vector<std::string> paths;
       for (const auto &file : variation.value()["files"]) {
         paths.push_back(file["path"].get<std::string>());
       }
-      WriteOutput(process.key(), variation.key(), paths, threads, mode);
+      inputOutputs.emplace_back(process.key(), variation.key(), paths);
     }
+  }
+
+  if (mode == -1) {
+    for (const InputOutput &io : inputOutputs) {
+      WriteOutput(std::get<0>(io), std::get<1>(io), std::get<2>(io), threads,
+                  mode);
+    }
+  } else {
+    ROOT::TThreadExecutor ex(threads);
+    ex.Foreach(
+        [&](const InputOutput &io) {
+          WriteOutput(std::get<0>(io), std::get<1>(io), std::get<2>(io),
+                      threads, mode);
+        },
+        inputOutputs);
   }
 
   return 0;
