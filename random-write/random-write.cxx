@@ -13,9 +13,20 @@
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
 using ROOT::Experimental::RNTupleWriteOptions;
+
+static void CallFsync(const char *filename) {
+  int fd = open(filename, O_RDWR);
+  if (fd < 0 || fsync(fd)) {
+    abort();
+  }
+  close(fd);
+}
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
@@ -44,8 +55,9 @@ int main(int argc, char *argv[]) {
   } else if (mode == 2) {
     options.SetCompression(0);
   }
+  static constexpr const char *Filename = "random.root";
   auto writer = RNTupleParallelWriter::Recreate(std::move(model), "random",
-                                                "random.root", options);
+                                                Filename, options);
   writer->EnableMetrics();
 
   std::mt19937 generator;
@@ -130,6 +142,9 @@ int main(int argc, char *argv[]) {
 
   // Destruct the writer and commit the dataset.
   writer.reset();
+
+  // Sync to permanent storage.
+  CallFsync(Filename);
 
   auto end = std::chrono::steady_clock::now();
   const std::chrono::duration<double> duration = end - start;

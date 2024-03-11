@@ -20,6 +20,17 @@ using ROOT::Experimental::RNTupleParallelWriter;
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <unistd.h>
+
+static void CallFsync(const char *filename) {
+  int fd = open(filename, O_RDWR);
+  if (fd < 0 || fsync(fd)) {
+    abort();
+  }
+  close(fd);
+}
+
 static void ErrorHandler(int level, bool abort, const char *location,
                          const char *msg) {
   if (level == kWarning && strstr(msg, "no dictionary for class")) {
@@ -124,8 +135,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Create NanoAOD writer.
+  static constexpr const char *Filename = "nanoAOD.root";
   auto writer =
-      RNTupleParallelWriter::Recreate(CreateModel(), "Events", "nanoAOD.root");
+      RNTupleParallelWriter::Recreate(CreateModel(), "Events", Filename);
 
   ROOT::TThreadExecutor ex(threads);
   ex.Foreach(
@@ -135,6 +147,10 @@ int main(int argc, char *argv[]) {
         ProcessInput(path, *context);
       },
       ROOT::TSeqU(paths.size()));
+
+  writer.reset();
+
+  CallFsync(Filename);
 
   return 0;
 }

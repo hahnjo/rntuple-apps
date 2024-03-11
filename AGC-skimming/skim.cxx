@@ -30,6 +30,17 @@ using nlohmann::json;
 #include <string>
 #include <vector>
 
+#include <fcntl.h>
+#include <unistd.h>
+
+static void CallFsync(const char *filename) {
+  int fd = open(filename, O_RDWR);
+  if (fd < 0 || fsync(fd)) {
+    abort();
+  }
+  close(fd);
+}
+
 static std::unique_ptr<RNTupleModel> CreateModel() {
   auto model = RNTupleModel::CreateBare();
 
@@ -233,6 +244,8 @@ static void WriteOutput(const std::string &process,
               RNTupleWriter::Recreate(CreateModel(), "Events", filename.str());
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
+          writer.reset();
+          CallFsync(filename.str().c_str());
         } else if (mode == 3) {
           auto file = bufferMerger->GetFile();
           auto writer = RNTupleWriter::Append(CreateModel(), "Events", *file);
@@ -274,6 +287,17 @@ static void WriteOutput(const std::string &process,
         }
       },
       ROOT::TSeqU(paths.size()));
+
+  if (mode <= 1) {
+    writer.reset();
+    CallFsync(filename.c_str());
+  } else if (mode == 3) {
+    bufferMerger.reset();
+    CallFsync(filename.c_str());
+  } else if (mode == 4) {
+    parallelWriter.reset();
+    CallFsync(filename.c_str());
+  }
 }
 
 int main(int argc, char *argv[]) {
