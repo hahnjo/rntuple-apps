@@ -6,6 +6,7 @@
 #include <ROOT/RNTupleParallelWriter.hxx>
 #include <ROOT/RNTupleWriteOptions.hxx>
 #include <ROOT/TThreadExecutor.hxx>
+#include <TROOT.h>
 
 #include <cstdio>
 #include <memory>
@@ -55,10 +56,6 @@ int main(int argc, char *argv[]) {
   } else if (mode == 2) {
     options.SetCompression(0);
   }
-  static constexpr const char *Filename = "random.root";
-  auto writer = RNTupleParallelWriter::Recreate(std::move(model), "random",
-                                                Filename, options);
-  writer->EnableMetrics();
 
   std::mt19937 generator;
   std::poisson_distribution<> poisson(5);
@@ -76,7 +73,15 @@ int main(int argc, char *argv[]) {
     energiesV[i] = uniform(generator);
   }
 
+  // Initialize ROOT outside of the measured section.
+  ROOT::GetROOT();
+
   auto start = std::chrono::steady_clock::now();
+
+  static constexpr const char *Filename = "random.root";
+  auto writer = RNTupleParallelWriter::Recreate(std::move(model), "random",
+                                                Filename, options);
+  writer->EnableMetrics();
 
   // Use TThreadExecutor to start a function in parallel, all threads will write
   // the same data.
