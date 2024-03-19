@@ -19,7 +19,7 @@ using ROOT::Experimental::RNTupleReader;
 using ROOT::Experimental::RNTupleWriter;
 
 #include "json.hpp"
-using nlohmann::json;
+using nlohmann::ordered_json;
 
 #include <cstdio>
 #include <cstdlib>
@@ -329,7 +329,7 @@ int main(int argc, char *argv[]) {
 
   // Parse input structure and map to output.
   std::ifstream f(inputs_path);
-  json inputs = json::parse(f);
+  auto inputs = ordered_json::parse(f);
 
   using Paths = std::vector<std::string>;
   using InputOutput = std::tuple<std::string, std::string, Paths>;
