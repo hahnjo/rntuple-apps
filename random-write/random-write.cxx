@@ -8,6 +8,7 @@
 #include <ROOT/TThreadExecutor.hxx>
 #include <TROOT.h>
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <random>
