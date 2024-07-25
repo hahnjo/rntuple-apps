@@ -66,7 +66,9 @@ int main(int argc, char *argv[]) {
   // numbers to make sure we have enough for one page to avoid compression from
   // creating unrealistically small files. For simplicity, ignore the different
   // element type sizes (64 bit / 8 bytes for indices, 4 bytes for floats).
-  static constexpr size_t RandomNumbers = 64 * 1024;
+  // Also add a prime offset to avoid identical pages and prevent RNTuple from
+  // same-page merging.
+  static constexpr size_t RandomNumbers = 64 * 1024 + 13;
   std::vector<int> numParticlesV(RandomNumbers);
   std::vector<double> energiesV(RandomNumbers);
   for (size_t i = 0; i < RandomNumbers; i++) {
