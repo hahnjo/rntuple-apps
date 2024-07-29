@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include <Compression.h>
 #include <ROOT/REntry.hxx>
 #include <ROOT/RNTupleFillContext.hxx>
 #include <ROOT/RNTupleModel.hxx>
@@ -32,17 +33,21 @@ static void CallFsync(const char *filename) {
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    fprintf(stderr, "Usage: ./random-write entries threads <mode>\n");
+    fprintf(stderr,
+            "Usage: ./random-write entries threads <mode> <compression>\n");
     return 1;
   }
 
   long entries = std::atol(argv[1]);
   int threads = std::atoi(argv[2]);
   // mode = 0: RNTupleParallelWriter with default settings
-  // mode = 2: RNTupleParallelWriter without compression
   int mode = 0;
   if (argc > 3) {
     mode = atoi(argv[3]);
+  }
+  int compression = ROOT::RCompressionSetting::EDefaults::kUseGeneralPurpose;
+  if (argc > 4) {
+    compression = atoi(argv[4]);
   }
 
   auto model = RNTupleModel::CreateBare();
@@ -50,9 +55,7 @@ int main(int argc, char *argv[]) {
   model->MakeField<std::vector<float>>("particles");
 
   RNTupleWriteOptions options;
-  if (mode == 2) {
-    options.SetCompression(0);
-  }
+  options.SetCompression(compression);
 
   std::mt19937 generator;
   std::poisson_distribution<> poisson(5);
