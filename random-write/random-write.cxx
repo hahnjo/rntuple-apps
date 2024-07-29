@@ -38,9 +38,7 @@ int main(int argc, char *argv[]) {
 
   long entries = std::atol(argv[1]);
   int threads = std::atoi(argv[2]);
-  // mode = 0: buffered RNTupleParallelWriter
-  // mode = 1: RNTupleParallelWriter without RPageSinkBuf
-  // (requires changes from https://github.com/root-project/root/pull/14939)
+  // mode = 0: RNTupleParallelWriter with default settings
   // mode = 2: RNTupleParallelWriter without compression
   int mode = 0;
   if (argc > 3) {
@@ -52,9 +50,7 @@ int main(int argc, char *argv[]) {
   model->MakeField<std::vector<float>>("particles");
 
   RNTupleWriteOptions options;
-  if (mode == 1) {
-    options.SetUseBufferedWrite(false);
-  } else if (mode == 2) {
+  if (mode == 2) {
     options.SetCompression(0);
   }
 
@@ -123,14 +119,11 @@ int main(int argc, char *argv[]) {
         auto end = std::chrono::steady_clock::now();
         const std::chrono::duration<double> duration = end - start;
 
-        const char *counter =
-            "RNTupleFillContext.RPageSinkBuf.timeWallCriticalSection";
-        if (!options.GetUseBufferedWrite()) {
-          counter = "RNTupleFillContext.RPageUnbufferedSyncSink."
-                    "timeWallCriticalSection";
-        }
         auto wallCS =
-            fillContext->GetMetrics().GetCounter(counter)->GetValueAsInt() /
+            fillContext->GetMetrics()
+                .GetCounter(
+                    "RNTupleFillContext.RPageSinkBuf.timeWallCriticalSection")
+                ->GetValueAsInt() /
             1e9;
         printf("thread #%d: total: %f s, in critical section: %f s, fraction c "
                "= %f\n",
