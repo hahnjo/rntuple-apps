@@ -41,6 +41,7 @@ int main(int argc, char *argv[]) {
   long entries = std::atol(argv[1]);
   int threads = std::atoi(argv[2]);
   // mode = 0: RNTupleParallelWriter with default settings
+  // mode = 1: RNTupleParallelWriter with Direct I/O
   int mode = 0;
   if (argc > 3) {
     mode = atoi(argv[3]);
@@ -56,6 +57,9 @@ int main(int argc, char *argv[]) {
 
   RNTupleWriteOptions options;
   options.SetCompression(compression);
+  if (mode == 1) {
+    options.SetUseDirectIO(true);
+  }
 
   std::mt19937 generator;
   std::poisson_distribution<> poisson(5);
