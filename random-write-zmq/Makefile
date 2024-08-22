@@ -15,4 +15,4 @@ default: random-write-zmq
 random-write-zmq.o RNTupleWriterZeroMQ.o: RNTupleWriterZeroMQ.hxx
 
 random-write-zmq: random-write-zmq.o RNTupleWriterZeroMQ.o
-	$(CXX) $^ -o $@ -lROOTNTuple $(ROOT_LIBS)
+	$(CXX) $^ -o $@ -lROOTNTuple $(ROOT_LIBS) -lzmq

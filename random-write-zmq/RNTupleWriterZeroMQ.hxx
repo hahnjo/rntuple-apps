@@ -37,6 +37,11 @@ public:
   };
 
 private:
+  /// The ZeroMQ context for this server.
+  void *fContext;
+  /// The ZeroMQ socket where clients can connect.
+  void *fSocket;
+
   RNTupleWriterZeroMQ(Config config);
 
 public:
@@ -44,7 +49,10 @@ public:
   RNTupleWriterZeroMQ(RNTupleWriterZeroMQ &&) = default;
   RNTupleWriterZeroMQ &operator=(const RNTupleWriterZeroMQ &) = delete;
   RNTupleWriterZeroMQ &operator=(RNTupleWriterZeroMQ &&) = default;
-  ~RNTupleWriterZeroMQ() = default;
+  ~RNTupleWriterZeroMQ();
+
+  /// Collect incoming data until the given number of clients terminate.
+  void Collect(std::size_t clients);
 
   /// Recreate a new file and return a server object.
   static std::unique_ptr<RNTupleWriterZeroMQ> Recreate(Config config);

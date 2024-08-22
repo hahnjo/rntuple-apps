@@ -110,7 +110,7 @@ int main(int argc, char *argv[]) {
     // workers.
     {
       auto writer = RNTupleWriterZeroMQ::Recreate(std::move(config));
-      // TODO
+      writer->Collect(procs);
     }
 
     for (auto &&pid : children) {
