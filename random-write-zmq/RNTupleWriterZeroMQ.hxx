@@ -3,6 +3,7 @@
 #ifndef RNTupleWriterZeroMQ_hxx
 #define RNTupleWriterZeroMQ_hxx
 
+#include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleWriteOptions.hxx>
 
 #include <memory>
@@ -50,6 +51,8 @@ private:
   /// The model to write the ntuple; needs to be destructed before fSink.
   std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
 
+  ROOT::Experimental::Detail::RNTupleMetrics fMetrics;
+
   RNTupleWriterZeroMQ(Config config);
 
 public:
@@ -61,6 +64,11 @@ public:
 
   /// Collect incoming data until the given number of clients terminate.
   void Collect(std::size_t clients);
+
+  void EnableMetrics() { fMetrics.Enable(); }
+  const ROOT::Experimental::Detail::RNTupleMetrics &GetMetrics() const {
+    return fMetrics;
+  }
 
   /// Recreate a new file and return a server object.
   static std::unique_ptr<RNTupleWriterZeroMQ> Recreate(Config config);

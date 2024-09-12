@@ -344,7 +344,7 @@ public:
 } // namespace
 
 RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
-    : fModel(std::move(config.fModel)) {
+    : fModel(std::move(config.fModel)), fMetrics("RNTupleWriterZeroMQ") {
   fContext = zmq_ctx_new();
   if (!fContext) {
     throw RException(R__FAIL("zmq_ctx_new() failed"));
@@ -363,6 +363,8 @@ RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
                                       config.fOptions);
   fModel->Freeze();
   fSink->Init(*fModel);
+
+  fMetrics.ObserveMetrics(fSink->GetMetrics());
 }
 
 RNTupleWriterZeroMQ::~RNTupleWriterZeroMQ() {

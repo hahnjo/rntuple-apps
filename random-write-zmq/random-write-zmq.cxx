@@ -108,9 +108,23 @@ int main(int argc, char *argv[]) {
   if (procId == procs) {
     // The original main process. Start the server and collect data sent by the
     // workers.
+    double wallWrite;
+    std::uint64_t bytes;
     {
       auto writer = RNTupleWriterZeroMQ::Recreate(std::move(config));
+      writer->EnableMetrics();
+
       writer->Collect(procs);
+
+      wallWrite =
+          writer->GetMetrics()
+              .GetCounter("RNTupleWriterZeroMQ.RPageSinkFile.timeWallWrite")
+              ->GetValueAsInt() /
+          1e9;
+      bytes =
+          writer->GetMetrics()
+              .GetCounter("RNTupleWriterZeroMQ.RPageSinkFile.szWritePayload")
+              ->GetValueAsInt();
     }
 
     for (auto &&pid : children) {
@@ -128,7 +142,14 @@ int main(int argc, char *argv[]) {
     auto end = std::chrono::steady_clock::now();
     const std::chrono::duration<double> duration = end - start;
 
-    printf(" === total time: %f s ===\n", duration.count());
+    auto bandwidthTotal = bytes / 1e6 / duration.count();
+    auto bandwidthWrite = bytes / 1e6 / wallWrite;
+    printf(" === total time: %f s, time writing: %f s,"
+           " average per process: %f s ===\n",
+           duration.count(), wallWrite, wallWrite / procs);
+    printf(" === data volume: %f GB (%lu bytes) ===\n", bytes / 1e9, bytes);
+    printf(" === bandwidth: %f MB/s, of write time: %f MB/s ===\n",
+           bandwidthTotal, bandwidthWrite);
 
     return 0;
   }
@@ -142,6 +163,8 @@ int main(int argc, char *argv[]) {
 
     auto eventId = entry->GetPtr<unsigned long>("eventId");
     auto particles = entry->GetPtr<std::vector<float>>("particles");
+
+    auto workerStart = std::chrono::steady_clock::now();
 
     int indexNumParticles = 0;
     int indexEnergies = 0;
@@ -162,6 +185,18 @@ int main(int argc, char *argv[]) {
     // In principle, it would not be needed to commit the cluster manually,
     // but this will include the last flush in the metrics just below.
     writer->CommitCluster();
+
+    auto workerEnd = std::chrono::steady_clock::now();
+    const std::chrono::duration<double> duration = workerEnd - workerStart;
+
+    auto wallCS =
+        writer->GetMetrics()
+            .GetCounter("RNTupleWriter.RPageSinkBuf.timeWallCriticalSection")
+            ->GetValueAsInt() /
+        1e9;
+    printf(
+        "proc #%d: total: %f s, in critical section: %f s, fraction c = %f\n",
+        procId, duration.count(), wallCS, wallCS / duration.count());
 
     // Destruct the writer and commit the dataset.
     writer.reset();
