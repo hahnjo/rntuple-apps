@@ -123,7 +123,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Sync to permanent storage.
-    // CallFsync(Filename);
+    CallFsync(Filename);
 
     auto end = std::chrono::steady_clock::now();
     const std::chrono::duration<double> duration = end - start;
