@@ -65,13 +65,13 @@ int main(int argc, char *argv[]) {
   std::poisson_distribution<> poisson(5);
   std::uniform_real_distribution<> uniform(0.0, 100.0);
 
-  // The default target unzipped page size is 64 * 1024; draw enough random
+  // The default maximum unzipped page size is 1024 * 1024; draw enough random
   // numbers to make sure we have enough for one page to avoid compression from
   // creating unrealistically small files. For simplicity, ignore the different
   // element type sizes (64 bit / 8 bytes for indices, 4 bytes for floats).
   // Also add a prime offset to avoid identical pages and prevent RNTuple from
   // same-page merging.
-  static constexpr size_t RandomNumbers = 64 * 1024 + 13;
+  size_t RandomNumbers = options.GetMaxUnzippedPageSize() + 13;
   std::vector<int> numParticlesV(RandomNumbers);
   std::vector<double> energiesV(RandomNumbers);
   for (size_t i = 0; i < RandomNumbers; i++) {
