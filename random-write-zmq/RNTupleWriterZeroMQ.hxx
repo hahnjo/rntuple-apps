@@ -38,6 +38,11 @@ public:
     std::string_view fEndpoint;
     /// Options for writing the ntuple.
     ROOT::Experimental::RNTupleWriteOptions fOptions;
+    /// Whether to send the payload data to the server. If not, clients only
+    /// send the metadata and get back an offset to write the payload data
+    /// themselves. This mode is more efficient, but requires that all processes
+    /// can access the same file.
+    bool fSendData = false;
   };
 
 private:
@@ -52,6 +57,8 @@ private:
   std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
 
   ROOT::Experimental::Detail::RNTupleMetrics fMetrics;
+  /// Whether the clients are expected to send the payload data.
+  bool fClientsSendData;
 
   RNTupleWriterZeroMQ(Config config);
 

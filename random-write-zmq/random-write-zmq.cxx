@@ -65,6 +65,7 @@ int main(int argc, char *argv[]) {
   config.fEndpoint = "tcp://127.0.0.1:5555";
   config.fOptions.SetCompression(compression);
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
+  config.fSendData = (mode == 0);
 
   // Prepare the data, before forking.
   std::mt19937 generator;
@@ -143,13 +144,22 @@ int main(int argc, char *argv[]) {
     const std::chrono::duration<double> duration = end - start;
 
     auto bandwidthTotal = bytes / 1e6 / duration.count();
-    auto bandwidthWrite = bytes / 1e6 / wallWrite;
-    printf(" === total time: %f s, time writing: %f s,"
-           " average per process: %f s ===\n",
-           duration.count(), wallWrite, wallWrite / procs);
+    if (config.fSendData) {
+      printf(" === total time: %f s, time writing: %f s,"
+             " average per process: %f s ===\n",
+             duration.count(), wallWrite, wallWrite / procs);
+    } else {
+      printf(" === total time: %f s, time writing (on server): %f s ===\n",
+             duration.count(), wallWrite);
+    }
     printf(" === data volume: %f GB (%lu bytes) ===\n", bytes / 1e9, bytes);
-    printf(" === bandwidth: %f MB/s, of write time: %f MB/s ===\n",
-           bandwidthTotal, bandwidthWrite);
+    if (config.fSendData) {
+      auto bandwidthWrite = bytes / 1e6 / wallWrite;
+      printf(" === bandwidth: %f MB/s, of write time: %f MB/s ===\n",
+             bandwidthTotal, bandwidthWrite);
+    } else {
+      printf(" === bandwidth: %f MB/s ===\n", bandwidthTotal);
+    }
 
     return 0;
   }
