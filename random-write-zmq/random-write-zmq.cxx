@@ -118,12 +118,12 @@ int main(int argc, char *argv[]) {
 
       wallWrite =
           writer->GetMetrics()
-              .GetCounter("RNTupleWriterZeroMQ.RPageSinkFile.timeWallWrite")
+              .GetCounter("RNTupleWriterZeroMQ.RPageSinkZeroMQ.timeWallWrite")
               ->GetValueAsInt() /
           1e9;
       bytes =
           writer->GetMetrics()
-              .GetCounter("RNTupleWriterZeroMQ.RPageSinkFile.szWritePayload")
+              .GetCounter("RNTupleWriterZeroMQ.RPageSinkZeroMQ.szWritePayload")
               ->GetValueAsInt();
     }
 

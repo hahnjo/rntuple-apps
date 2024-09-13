@@ -2,9 +2,13 @@
 
 #include "RNTupleWriterZeroMQ.hxx"
 
+#include <ROOT/RMiniFile.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
+#include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleSerialize.hxx>
+#include <ROOT/RNTupleUtil.hxx>
 #include <ROOT/RNTupleWriter.hxx>
+#include <ROOT/RNTupleZip.hxx>
 #include <ROOT/RPageAllocator.hxx>
 #include <ROOT/RPageSinkBuf.hxx>
 #include <ROOT/RPageStorage.hxx>
@@ -62,13 +66,17 @@ using ROOT::Experimental::NTupleSize_t;
 using ROOT::Experimental::RClusterDescriptor;
 using ROOT::Experimental::RExtraTypeInfoDescriptor;
 using ROOT::Experimental::RNTupleDescriptor;
+using ROOT::Experimental::RNTupleLocator;
 using ROOT::Experimental::RNTupleModel;
+using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Internal::RClusterDescriptorBuilder;
 using ROOT::Experimental::Internal::RClusterGroupDescriptorBuilder;
 using ROOT::Experimental::Internal::RColumn;
 using ROOT::Experimental::Internal::RColumnDescriptorBuilder;
 using ROOT::Experimental::Internal::RFieldDescriptorBuilder;
+using ROOT::Experimental::Internal::RNTupleCompressor;
 using ROOT::Experimental::Internal::RNTupleDescriptorBuilder;
+using ROOT::Experimental::Internal::RNTupleFileWriter;
 using ROOT::Experimental::Internal::RNTupleModelChangeset;
 using ROOT::Experimental::Internal::RNTupleSerializer;
 using ROOT::Experimental::Internal::RPage;
@@ -77,7 +85,7 @@ using ROOT::Experimental::Internal::RPageSink;
 using ROOT::Experimental::Internal::RPageStorage;
 
 /// A page sink that sends all data to the RNTupleWriterZeroMQ server.
-class RPageSinkZeroMQ : public RPageSink {
+class RPageSinkZeroMQClient : public RPageSink {
   /// A helper struct to keep information about a column and buffer all sealed
   /// pages that were committed to this page sink.
   struct RColumnBuf {
@@ -107,7 +115,7 @@ class RPageSinkZeroMQ : public RPageSink {
   void *fSocket;
 
 public:
-  RPageSinkZeroMQ(const RNTupleWriterZeroMQ::Config &config)
+  RPageSinkZeroMQClient(const RNTupleWriterZeroMQ::Config &config)
       : RPageSink(config.fNTupleName, config.fOptions) {
     fContext = zmq_ctx_new();
     if (!fContext) {
@@ -124,7 +132,7 @@ public:
     }
   }
 
-  ~RPageSinkZeroMQ() final {
+  ~RPageSinkZeroMQClient() final {
     zmq_close(fSocket);
     zmq_ctx_destroy(fContext);
   }
@@ -178,11 +186,12 @@ public:
     fSerializationContext.MapSchema(descriptor, /*forHeaderExtension=*/false);
   }
   void UpdateSchema(const RNTupleModelChangeset &, NTupleSize_t) final {
-    throw RException(R__FAIL("UpdateSchema not supported via RPageSinkZeroMQ"));
+    throw RException(
+        R__FAIL("UpdateSchema not supported via RPageSinkZeroMQClient"));
   }
   void UpdateExtraTypeInfo(const RExtraTypeInfoDescriptor &) final {
     throw RException(
-        R__FAIL("UpdateExtraTypeInfo not supported via RPageSinkZeroMQ"));
+        R__FAIL("UpdateExtraTypeInfo not supported via RPageSinkZeroMQClient"));
   }
 
   void CommitSuppressedColumn(ColumnHandle_t columnHandle) final {
@@ -208,7 +217,7 @@ public:
   }
   void CommitSealedPage(DescriptorId_t, const RSealedPage &) final {
     throw RException(R__FAIL(
-        "should never commit a single sealed page via RPageSinkZeroMQ"));
+        "should never commit a single sealed page via RPageSinkZeroMQClient"));
   }
   void
   CommitSealedPageV(std::span<RPageStorage::RSealedPageGroup> ranges) final {
@@ -341,6 +350,141 @@ public:
   }
 };
 
+/// A persistent page sink based on RPageSinkFile used by the
+/// RNTupleWriterZeroMQ server.
+class RPageSinkZeroMQServer : public RPagePersistentSink {
+  /// The file writer to write the ntuple.
+  std::unique_ptr<RNTupleFileWriter> fWriter;
+
+public:
+  RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
+      : RPagePersistentSink(config.fNTupleName, config.fOptions) {
+    fCompressor = std::make_unique<RNTupleCompressor>();
+    EnableDefaultMetrics("RPageSinkZeroMQ");
+    // No support for merging pages at the moment
+    fFeatures.fCanMergePages = false;
+    fWriter = RNTupleFileWriter::Recreate(
+        config.fNTupleName, config.fStorage,
+        RNTupleFileWriter::EContainerFormat::kTFile, config.fOptions);
+  }
+
+  void InitImpl(unsigned char *serializedHeader,
+                std::uint32_t length) override {
+    // Copied from RPageSinkFile::InitImpl
+    auto zipBuffer = std::make_unique<unsigned char[]>(length);
+    auto szZipHeader = fCompressor->Zip(
+        serializedHeader, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
+    fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
+  };
+
+  RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
+    throw RException(
+        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
+    return {};
+  }
+  RNTupleLocator CommitSealedPageImpl(DescriptorId_t,
+                                      const RSealedPage &) override {
+    throw RException(
+        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
+    return {};
+  }
+
+  std::vector<RNTupleLocator>
+  CommitSealedPageVImpl(std::span<RPageStorage::RSealedPageGroup> ranges,
+                        const std::vector<bool> &mask) {
+    std::uint64_t sumSealedPages = 0, sumBytesPacked = 0;
+
+    std::size_t nPages = 0;
+    for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
+      auto &range = *rangeIt;
+      if (range.fFirst == range.fLast) {
+        // Skip empty ranges, they might not have a physical column ID!
+        continue;
+      }
+
+      const auto bitsOnStorage =
+          fDescriptorBuilder.GetDescriptor()
+              .GetColumnDescriptor(range.fPhysicalColumnId)
+              .GetBitsOnStorage();
+
+      for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
+           ++sealedPageIt) {
+        assert(mask[nPages]);
+        nPages++;
+
+        const auto bytesPacked =
+            (bitsOnStorage * sealedPageIt->GetNElements() + 7) / 8;
+        sumSealedPages += sealedPageIt->GetBufferSize();
+        sumBytesPacked += bytesPacked;
+      }
+    }
+
+    assert(sumSealedPages < fOptions->GetMaxKeySize());
+    assert(sumBytesPacked < fOptions->GetMaxKeySize());
+
+    std::vector<RNTupleLocator> locators;
+    {
+      RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
+                               fCounters->fTimeCpuWrite);
+
+      std::uint64_t offset =
+          fWriter->ReserveBlob(sumSealedPages, sumBytesPacked);
+
+      locators.reserve(nPages);
+
+      for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
+        for (auto sealedPageIt = rangeIt->fFirst;
+             sealedPageIt != rangeIt->fLast; ++sealedPageIt) {
+          const auto &sealedPage = *sealedPageIt;
+          fWriter->WriteIntoReservedBlob(sealedPage.GetBuffer(),
+                                         sealedPage.GetBufferSize(), offset);
+          RNTupleLocator locator;
+          locator.fPosition = offset;
+          locator.fBytesOnStorage = sealedPage.GetDataSize();
+          locators.push_back(locator);
+          offset += sealedPage.GetBufferSize();
+        }
+      }
+    }
+
+    fCounters->fNPageCommitted.Add(nPages);
+    fCounters->fSzWritePayload.Add(sumSealedPages);
+
+    return locators;
+  }
+
+  std::uint64_t StageClusterImpl() override {
+    // We don't care about the number of bytes written on the server.
+    return 0;
+  }
+  RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList,
+                                        std::uint32_t length) override {
+    // Copied from RPageSinkFile::CommitClusterGroupImpl
+    auto bufPageListZip = std::make_unique<unsigned char[]>(length);
+    auto szPageListZip = fCompressor->Zip(
+        serializedPageList, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
+
+    RNTupleLocator result;
+    result.fBytesOnStorage = szPageListZip;
+    result.fPosition =
+        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length);
+    return result;
+  }
+  void CommitDatasetImpl(unsigned char *serializedFooter,
+                         std::uint32_t length) override {
+    // Copied from RPageSinkFile::CommitDatasetImpl
+    fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
+    auto bufFooterZip = std::make_unique<unsigned char[]>(length);
+    auto szFooterZip = fCompressor->Zip(
+        serializedFooter, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(bufFooterZip.get()));
+    fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
+    fWriter->Commit();
+  }
+};
+
 } // namespace
 
 RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
@@ -359,8 +503,7 @@ RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
     throw RException(R__FAIL("zmq_bind() failed"));
   }
 
-  fSink = RPagePersistentSink::Create(config.fNTupleName, config.fStorage,
-                                      config.fOptions);
+  fSink = std::make_unique<RPageSinkZeroMQServer>(config);
   fModel->Freeze();
   fSink->Init(*fModel);
 
@@ -476,7 +619,7 @@ RNTupleWriterZeroMQ::Recreate(Config config) {
 std::unique_ptr<ROOT::Experimental::RNTupleWriter>
 RNTupleWriterZeroMQ::CreateWorkerWriter(Config config) {
   std::unique_ptr<ROOT::Experimental::Internal::RPageSink> sink =
-      std::make_unique<RPageSinkZeroMQ>(config);
+      std::make_unique<RPageSinkZeroMQClient>(config);
   if (config.fOptions.GetUseBufferedWrite()) {
     sink = std::make_unique<ROOT::Experimental::Internal::RPageSinkBuf>(
         std::move(sink));
