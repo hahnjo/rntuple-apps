@@ -119,9 +119,9 @@ int main(int argc, char *argv[]) {
 
           particles->clear();
         }
-        // In principle, it would not be needed to commit the cluster manually,
-        // but this will include the last flush in the metrics just below.
-        fillContext->CommitCluster();
+        // In principle, it would not be needed to flush the cluster manually,
+        // but this will include the last cluster in the metrics just below.
+        fillContext->FlushCluster();
 
         auto end = std::chrono::steady_clock::now();
         const std::chrono::duration<double> duration = end - start;
