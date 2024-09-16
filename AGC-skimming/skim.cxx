@@ -220,6 +220,8 @@ static void WriteOutput(const std::string &process,
     for (const auto &path : paths) {
       ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
     }
+    writer.reset();
+    CallFsync(filename.c_str());
     return;
   }
 
