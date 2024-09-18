@@ -60,17 +60,18 @@ int main(int argc, char *argv[]) {
   if (mode == 1) {
     options.SetUseDirectIO(true);
   }
+  options.SetMaxUnzippedPageSize(128 * 1024);
 
   std::mt19937 generator;
   std::poisson_distribution<> poisson(5);
   std::uniform_real_distribution<> uniform(0.0, 100.0);
 
-  // The default maximum unzipped page size is 1024 * 1024; draw enough random
-  // numbers to make sure we have enough for one page to avoid compression from
-  // creating unrealistically small files. For simplicity, ignore the different
-  // element type sizes (64 bit / 8 bytes for indices, 4 bytes for floats).
-  // Also add a prime offset to avoid identical pages and prevent RNTuple from
-  // same-page merging.
+  // We set the default maximum unzipped page size to 128 * 1024; draw enough
+  // random numbers to make sure we have enough for one page to avoid
+  // compression from creating unrealistically small files. For simplicity,
+  // ignore the different element type sizes (64 bit / 8 bytes for indices, 4
+  // bytes for floats). Also add a prime offset to avoid identical pages and
+  // prevent RNTuple from same-page merging.
   size_t RandomNumbers = options.GetMaxUnzippedPageSize() + 13;
   std::vector<int> numParticlesV(RandomNumbers);
   std::vector<double> energiesV(RandomNumbers);
