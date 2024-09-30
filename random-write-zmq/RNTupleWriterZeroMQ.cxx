@@ -26,6 +26,7 @@
 /// used as the write buffer size on the server, it must be a multiple of 4096
 /// (see RNTupleWriteOptions).
 static constexpr std::size_t kServerClientWriteAlignment = 4096;
+static constexpr std::size_t kClientWriteBufferSize = 4 * 1024 * 1024;
 
 namespace {
 
@@ -127,6 +128,8 @@ class RPageSinkZeroMQClient : public RPageSink {
   std::string fStorage;
   /// The opened file descriptor.
   int fFileDes = -1;
+  /// A scratch area to buffer writes to the file.
+  unsigned char *fBlock = nullptr;
   /// Whether to send the payload data to the server.
   bool fSendData;
 
@@ -147,11 +150,22 @@ public:
     if (rc) {
       throw RException(R__FAIL("zmq_connect() failed"));
     }
+
+    if (!fSendData) {
+      std::align_val_t blockAlign{kServerClientWriteAlignment};
+      fBlock = static_cast<unsigned char *>(
+          ::operator new[](kClientWriteBufferSize, blockAlign));
+      memset(fBlock, 0, kClientWriteBufferSize);
+    }
   }
 
   ~RPageSinkZeroMQClient() final {
     if (fFileDes > 0) {
       close(fFileDes);
+    }
+    if (fBlock) {
+      std::align_val_t blockAlign{kServerClientWriteAlignment};
+      ::operator delete[](fBlock, blockAlign);
     }
 
     zmq_close(fSocket);
@@ -360,15 +374,58 @@ public:
       assert(zmq_msg_size(&msg) == sizeof(std::uint64_t));
       std::uint64_t offset;
       RNTupleSerializer::DeserializeUInt64(zmq_msg_data(&msg), offset);
+      assert(offset % kServerClientWriteAlignment == 0);
+      std::uint64_t blockOffset = offset;
 
       // Write the sealed page buffers in the same order.
       for (auto &columnBuf : fBufferedColumns) {
         for (auto &pageBuf : columnBuf.fPages) {
-          auto sealedBufferSize = pageBuf.fSealedPage.GetBufferSize();
-          pwrite(fFileDes, pageBuf.fSealedPage.GetBuffer(), sealedBufferSize,
-                 offset);
-          offset += sealedBufferSize;
+          auto nBytesPage = pageBuf.fSealedPage.GetBufferSize();
+          const unsigned char *buffer = static_cast<const unsigned char *>(
+              pageBuf.fSealedPage.GetBuffer());
+          while (nBytesPage > 0) {
+            std::uint64_t posInBlock = offset - blockOffset;
+            if (posInBlock >= kClientWriteBufferSize) {
+              // Write the block.
+              std::size_t retval =
+                  pwrite(fFileDes, fBlock, kClientWriteBufferSize, blockOffset);
+              if (retval != kClientWriteBufferSize)
+                throw RException(
+                    R__FAIL(std::string("write failed: ") + strerror(errno)));
+
+              // Null the buffer contents for good measure.
+              memset(fBlock, 0, kClientWriteBufferSize);
+              posInBlock = offset % kServerClientWriteAlignment;
+              blockOffset = offset - posInBlock;
+            }
+
+            std::size_t blockSize = nBytesPage;
+            if (blockSize > kClientWriteBufferSize - posInBlock) {
+              blockSize = kClientWriteBufferSize - posInBlock;
+            }
+            memcpy(fBlock + posInBlock, buffer, blockSize);
+            buffer += blockSize;
+            nBytesPage -= blockSize;
+            offset += blockSize;
+          }
         }
+      }
+
+      // Flush the buffer if any data left.
+      if (offset > blockOffset) {
+        std::size_t lastBlockSize = offset - blockOffset;
+        // Round up to a multiple of kServerClientWriteAlignment.
+        lastBlockSize += kServerClientWriteAlignment - 1;
+        lastBlockSize = (lastBlockSize / kServerClientWriteAlignment) *
+                        kServerClientWriteAlignment;
+        std::size_t retval =
+            pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
+        if (retval != lastBlockSize)
+          throw RException(
+              R__FAIL(std::string("write failed: ") + strerror(errno)));
+
+        // Null the buffer contents for good measure.
+        memset(fBlock, 0, kClientWriteBufferSize);
       }
     }
 
