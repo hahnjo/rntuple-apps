@@ -365,6 +365,9 @@ public:
         // Add the equivalent flag that is passed by fopen64.
         flags |= O_LARGEFILE;
 #endif
+        if (fOptions->GetUseDirectIO()) {
+          flags |= O_DIRECT;
+        }
         fFileDes = open(fStorage.c_str(), flags, 0666);
         if (fFileDes < 0) {
           throw RException(R__FAIL("open() failed"));
