@@ -11,6 +11,7 @@
 #include <TROOT.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <random>
@@ -55,7 +56,7 @@ int main(int argc, char *argv[]) {
   }
 
   auto model = RNTupleModel::CreateBare();
-  model->MakeField<unsigned long>("eventId");
+  model->MakeField<std::uint64_t>("eventId");
   model->MakeField<std::vector<float>>("particles");
 
   static constexpr const char *Filename = "random.root";
@@ -175,7 +176,7 @@ int main(int argc, char *argv[]) {
 
     auto entry = writer->CreateEntry();
 
-    auto eventId = entry->GetPtr<unsigned long>("eventId");
+    auto eventId = entry->GetPtr<std::uint64_t>("eventId");
     auto particles = entry->GetPtr<std::vector<float>>("particles");
 
     auto workerStart = std::chrono::steady_clock::now();
