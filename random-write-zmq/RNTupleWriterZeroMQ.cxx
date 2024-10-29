@@ -79,6 +79,8 @@ using ROOT::Experimental::RNTupleLocator;
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleWriteOptions;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
+using ROOT::Experimental::Internal::GetFieldZeroOfModel;
+using ROOT::Experimental::Internal::GetProjectedFieldsOfModel;
 using ROOT::Experimental::Internal::RClusterDescriptorBuilder;
 using ROOT::Experimental::Internal::RClusterGroupDescriptorBuilder;
 using ROOT::Experimental::Internal::RColumn;
@@ -193,16 +195,17 @@ public:
   }
 
   void InitImpl(RNTupleModel &model) final {
-    auto &fieldZero = model.GetFieldZero();
+    auto &fieldZero = GetFieldZeroOfModel(model);
     fDescriptorBuilder.AddField(RFieldDescriptorBuilder::FromField(fieldZero)
                                     .FieldId(0)
                                     .MakeDescriptor()
                                     .Unwrap());
     fieldZero.SetOnDiskId(0);
-    model.GetProjectedFields().GetFieldZero()->SetOnDiskId(0);
+    auto &projectedFields = GetProjectedFieldsOfModel(model);
+    projectedFields.GetFieldZero().SetOnDiskId(0);
 
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
-    for (auto &f : model.GetFieldZero()) {
+    for (auto &f : fieldZero) {
       auto fieldId = descriptor.GetNFields();
       fDescriptorBuilder.AddField(RFieldDescriptorBuilder::FromField(f)
                                       .FieldId(fieldId)
