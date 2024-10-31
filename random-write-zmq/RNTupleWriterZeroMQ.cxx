@@ -728,7 +728,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
     // and RPageSinkZeroMQServer will not write them.
     std::deque<RPageStorage::SealedPageSequence_t> sealedPagesV;
     std::vector<RPageStorage::RSealedPageGroup> sealedPageGroups;
-    auto nColumns = clusterDescriptor.GetColumnRangeIterable().count();
+    auto nColumns = clusterDescriptor.GetColumnRangeIterable().size();
     DescriptorId_t columnId = 0;
     while (nColumns > 0) {
       if (!clusterDescriptor.ContainsColumn(columnId)) {
