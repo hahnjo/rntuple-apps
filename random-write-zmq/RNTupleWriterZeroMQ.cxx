@@ -97,7 +97,7 @@ using ROOT::Experimental::Internal::RPageSink;
 using ROOT::Experimental::Internal::RPageStorage;
 
 /// A page sink that sends all data to the RNTupleWriterZeroMQ server.
-class RPageSinkZeroMQClient : public RPageSink {
+class RPageSinkZeroMQClient final : public RPageSink {
   /// A helper struct to keep information about a column and buffer all sealed
   /// pages that were committed to this page sink.
   struct RColumnBuf {
@@ -471,7 +471,7 @@ public:
 
 /// A persistent page sink based on RPageSinkFile used by the
 /// RNTupleWriterZeroMQ server.
-class RPageSinkZeroMQServer : public RPagePersistentSink {
+class RPageSinkZeroMQServer final : public RPagePersistentSink {
   /// The file writer to write the ntuple.
   std::unique_ptr<RNTupleFileWriter> fWriter;
   /// The last offset in the file that was reserved in CommitSealedPageVImpl.
@@ -527,7 +527,7 @@ public:
 
   std::vector<RNTupleLocator>
   CommitSealedPageVImpl(std::span<RPageStorage::RSealedPageGroup> ranges,
-                        const std::vector<bool> &mask) {
+                        const std::vector<bool> &mask) override {
     std::uint64_t sumSealedPages = 0, sumBytesPacked = 0;
 
     std::size_t nPages = 0;
