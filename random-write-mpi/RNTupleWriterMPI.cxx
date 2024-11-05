@@ -362,15 +362,6 @@ public:
       fSink->CommitSealedPageV(sealedPageGroups);
       fSink->CommitCluster(clusterDescriptor.GetNEntries());
 
-      // Send the response, if the process needs to write the payload.
-      if (!fProcessesSendData) {
-        unsigned char bufOffset[sizeof(std::uint64_t)];
-        std::uint64_t offset = fSink->GetLastOffset();
-        RNTupleSerializer::SerializeUInt64(offset, &bufOffset);
-        MPI_Send(&bufOffset, sizeof(bufOffset), MPI_BYTE, source, kTagOffset,
-                 fComm);
-      }
-
       // Send the response.
       int size = 0;
       unsigned char bufOffset[sizeof(std::uint64_t)];
