@@ -80,7 +80,8 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
-  config.fSendData = !(mode & 1);
+  bool sendData = !(mode & 1);
+  config.fSendData = sendData;
 
   // Prepare the data.
   std::mt19937 generator;
@@ -181,7 +182,7 @@ int main(int argc, char *argv[]) {
     const std::chrono::duration<double> duration = end - start;
 
     auto bandwidthTotal = bytes / 1e6 / duration.count();
-    if (config.fSendData) {
+    if (sendData) {
       printf(" === total time: %f s, time writing: %f s,"
              " average per process: %f s ===\n",
              duration.count(), wallWrite, wallWrite / size);
@@ -190,7 +191,7 @@ int main(int argc, char *argv[]) {
              duration.count(), wallWrite);
     }
     printf(" === data volume: %f GB (%lu bytes) ===\n", bytes / 1e9, bytes);
-    if (config.fSendData) {
+    if (sendData) {
       auto bandwidthWrite = bytes / 1e6 / wallWrite;
       printf(" === bandwidth: %f MB/s, of write time: %f MB/s ===\n",
              bandwidthTotal, bandwidthWrite);
