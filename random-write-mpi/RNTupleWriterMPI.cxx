@@ -45,8 +45,10 @@ using ROOT::Experimental::RNTupleDescriptor;
 using ROOT::Experimental::RNTupleLocator;
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleWriteOptions;
+using ROOT::Experimental::Detail::RNTupleAtomicCounter;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Detail::RNTupleMetrics;
+using ROOT::Experimental::Detail::RNTupleTickCounter;
 using ROOT::Experimental::Internal::GetFieldZeroOfModel;
 using ROOT::Experimental::Internal::GetProjectedFieldsOfModel;
 using ROOT::Experimental::Internal::RClusterDescriptorBuilder;
@@ -411,6 +413,16 @@ class RPageSinkMPI final : public RPageSink {
   /// The aggregator running on the root.
   std::unique_ptr<RNTupleWriterMPIAggregator> fAggregator;
 
+  struct RCounters {
+    RNTupleAtomicCounter &fNPageCommitted;
+    RNTupleAtomicCounter &fSzWritePayload;
+    RNTupleAtomicCounter &fTimeWallWrite;
+    RNTupleAtomicCounter &fTimeWallCommAggregator;
+    RNTupleTickCounter<RNTupleAtomicCounter> &fTimeCpuWrite;
+    RNTupleTickCounter<RNTupleAtomicCounter> &fTimeCpuCommAggregator;
+  };
+  std::unique_ptr<RCounters> fCounters;
+
   /// Storage path for opening the same file on all processes.
   std::string fStorage;
   /// The opened file descriptor.
@@ -425,6 +437,22 @@ public:
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
         fStorage(config.fStorage), fSendData(config.fSendData) {
     fMetrics = RNTupleMetrics("RPageSinkMPI");
+    fCounters = std::make_unique<RCounters>(RCounters{
+        *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
+            "nPageCommitted", "", "number of pages committed to storage"),
+        *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
+            "szWritePayload", "B", "volume written for committed pages"),
+        *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
+            "timeWallWrite", "ns", "wall clock time spent writing"),
+        *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
+            "timeWallCommAggregator", "ns",
+            "wall clock time spent communicating with the aggregator"),
+        *fMetrics.MakeCounter<RNTupleTickCounter<RNTupleAtomicCounter> *>(
+            "timeCpuWrite", "ns", "CPU time spent writing"),
+        *fMetrics.MakeCounter<RNTupleTickCounter<RNTupleAtomicCounter> *>(
+            "timeCpuCommAggregator", "ns",
+            "CPU time spent communicating with the aggregator")});
+
     MPI_Comm_dup(comm, &fComm);
 
     if (!fSendData) {
@@ -579,6 +607,7 @@ public:
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
 
     // Build a RClusterDescriptor based on the buffered columns and pages.
+    std::uint64_t nPages = 0;
     std::uint64_t sumSealedPages = 0;
     RClusterDescriptorBuilder clusterBuilder;
     DescriptorId_t clusterId = descriptor.GetNActiveClusters();
@@ -601,6 +630,7 @@ public:
           auto sealedBufferSize = pageBuf.fSealedPage.GetBufferSize();
           pageInfo.fLocator.fBytesOnStorage = sealedBufferSize;
           pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
+          nPages++;
           sumSealedPages += sealedBufferSize;
           pageRange.fPageInfos.emplace_back(pageInfo);
         }
@@ -641,13 +671,19 @@ public:
       assert(ptr == buffer.get() + szBuffer);
     }
 
-    MPI_Send(buffer.get(), szBuffer, MPI_BYTE, fRoot, kTagAggregator, fComm);
-
-    // Get back the reply, the message is empty unless we did not send the data.
     unsigned char bufOffset[sizeof(std::uint64_t)];
     MPI_Status status;
-    MPI_Recv(&bufOffset, sizeof(bufOffset), MPI_BYTE, fRoot, kTagOffset, fComm,
-             &status);
+    {
+      RNTupleAtomicTimer timer(fCounters->fTimeWallCommAggregator,
+                               fCounters->fTimeCpuCommAggregator);
+
+      MPI_Send(buffer.get(), szBuffer, MPI_BYTE, fRoot, kTagAggregator, fComm);
+
+      // Get back the reply, the message is empty unless we did not send the
+      // data.
+      MPI_Recv(&bufOffset, sizeof(bufOffset), MPI_BYTE, fRoot, kTagOffset,
+               fComm, &status);
+    }
 
     if (!fSendData) {
       // After the aggregator replied, we are guaranteed that it created the
@@ -677,55 +713,60 @@ public:
       assert(offset % kAggregatorWriteAlignment == 0);
       std::uint64_t blockOffset = offset;
 
-      // Write the sealed page buffers in the same order.
-      for (auto &columnBuf : fBufferedColumns) {
-        for (auto &pageBuf : columnBuf.fPages) {
-          auto nBytesPage = pageBuf.fSealedPage.GetBufferSize();
-          const unsigned char *buffer = static_cast<const unsigned char *>(
-              pageBuf.fSealedPage.GetBuffer());
-          while (nBytesPage > 0) {
-            std::uint64_t posInBlock = offset - blockOffset;
-            if (posInBlock >= kProcessWriteBufferSize) {
-              // Write the block.
-              std::size_t retval = pwrite(fFileDes, fBlock,
-                                          kProcessWriteBufferSize, blockOffset);
-              if (retval != kProcessWriteBufferSize)
-                throw RException(
-                    R__FAIL(std::string("write failed: ") + strerror(errno)));
+      {
+        RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
+                                 fCounters->fTimeCpuWrite);
 
-              // Null the buffer contents for good measure.
-              memset(fBlock, 0, kProcessWriteBufferSize);
-              posInBlock = offset % kAggregatorWriteAlignment;
-              blockOffset = offset - posInBlock;
-            }
+        // Write the sealed page buffers in the same order.
+        for (auto &columnBuf : fBufferedColumns) {
+          for (auto &pageBuf : columnBuf.fPages) {
+            auto nBytesPage = pageBuf.fSealedPage.GetBufferSize();
+            const unsigned char *buffer = static_cast<const unsigned char *>(
+                pageBuf.fSealedPage.GetBuffer());
+            while (nBytesPage > 0) {
+              std::uint64_t posInBlock = offset - blockOffset;
+              if (posInBlock >= kProcessWriteBufferSize) {
+                // Write the block.
+                std::size_t retval = pwrite(
+                    fFileDes, fBlock, kProcessWriteBufferSize, blockOffset);
+                if (retval != kProcessWriteBufferSize)
+                  throw RException(
+                      R__FAIL(std::string("write failed: ") + strerror(errno)));
 
-            std::size_t blockSize = nBytesPage;
-            if (blockSize > kProcessWriteBufferSize - posInBlock) {
-              blockSize = kProcessWriteBufferSize - posInBlock;
+                // Null the buffer contents for good measure.
+                memset(fBlock, 0, kProcessWriteBufferSize);
+                posInBlock = offset % kAggregatorWriteAlignment;
+                blockOffset = offset - posInBlock;
+              }
+
+              std::size_t blockSize = nBytesPage;
+              if (blockSize > kProcessWriteBufferSize - posInBlock) {
+                blockSize = kProcessWriteBufferSize - posInBlock;
+              }
+              memcpy(fBlock + posInBlock, buffer, blockSize);
+              buffer += blockSize;
+              nBytesPage -= blockSize;
+              offset += blockSize;
             }
-            memcpy(fBlock + posInBlock, buffer, blockSize);
-            buffer += blockSize;
-            nBytesPage -= blockSize;
-            offset += blockSize;
           }
         }
-      }
 
-      // Flush the buffer if any data left.
-      if (offset > blockOffset) {
-        std::size_t lastBlockSize = offset - blockOffset;
-        // Round up to a multiple of kAggregatorWriteAlignment.
-        lastBlockSize += kAggregatorWriteAlignment - 1;
-        lastBlockSize = (lastBlockSize / kAggregatorWriteAlignment) *
-                        kAggregatorWriteAlignment;
-        std::size_t retval =
-            pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
-        if (retval != lastBlockSize)
-          throw RException(
-              R__FAIL(std::string("write failed: ") + strerror(errno)));
+        // Flush the buffer if any data left.
+        if (offset > blockOffset) {
+          std::size_t lastBlockSize = offset - blockOffset;
+          // Round up to a multiple of kAggregatorWriteAlignment.
+          lastBlockSize += kAggregatorWriteAlignment - 1;
+          lastBlockSize = (lastBlockSize / kAggregatorWriteAlignment) *
+                          kAggregatorWriteAlignment;
+          std::size_t retval =
+              pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
+          if (retval != lastBlockSize)
+            throw RException(
+                R__FAIL(std::string("write failed: ") + strerror(errno)));
 
-        // Null the buffer contents for good measure.
-        memset(fBlock, 0, kProcessWriteBufferSize);
+          // Null the buffer contents for good measure.
+          memset(fBlock, 0, kProcessWriteBufferSize);
+        }
       }
     }
 
@@ -735,6 +776,9 @@ public:
       columnBuf.fNElements = 0;
       columnBuf.fIsSuppressed = false;
     }
+
+    fCounters->fNPageCommitted.Add(nPages);
+    fCounters->fSzWritePayload.Add(sumSealedPages);
 
     return sumSealedPages;
   }

@@ -146,25 +146,47 @@ int main(int argc, char *argv[]) {
   auto rankEnd = std::chrono::steady_clock::now();
   const std::chrono::duration<double> rankDuration = rankEnd - rankStart;
 
+  auto wallZip = writer->GetMetrics()
+                     .GetCounter("RNTupleWriter.RPageSinkBuf.timeWallZip")
+                     ->GetValueAsInt() /
+                 1e9;
   auto wallCS =
       writer->GetMetrics()
           .GetCounter("RNTupleWriter.RPageSinkBuf.timeWallCriticalSection")
           ->GetValueAsInt() /
       1e9;
-  printf("rank #%d: total: %f s, in critical section: %f s, fraction c = %f\n",
-         rank, rankDuration.count(), wallCS, wallCS / rankDuration.count());
+  auto wallCommAggregator =
+      writer->GetMetrics()
+          .GetCounter(
+              "RNTupleWriter.RPageSinkBuf.RPageSinkMPI.timeWallCommAggregator")
+          ->GetValueAsInt() /
+      1e9;
+  char writing[100] = {0};
+  if (!sendData) {
+    auto wallWrite =
+        writer->GetMetrics()
+            .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI.timeWallWrite")
+            ->GetValueAsInt() /
+        1e9;
+    sprintf(writing, ", writing: %f s", wallWrite);
+  }
+  printf("rank #%d: total: %f s, zipping: %f, in critical section: %f s,"
+         " communicating: %f s (fraction c = %f)%s\n",
+         rank, rankDuration.count(), wallZip, wallCS, wallCommAggregator,
+         wallCommAggregator / rankDuration.count(), writing);
 
   // Synchronize the ranks to make sure all data is written.
   MPI_Barrier(MPI_COMM_WORLD);
 
-  double wallWrite;
+  double wallAggregatorWrite;
   std::uint64_t bytes;
   if (rank == kRoot) {
-    wallWrite = writer->GetMetrics()
-                    .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI."
-                                "Aggregator.timeWallWrite")
-                    ->GetValueAsInt() /
-                1e9;
+    wallAggregatorWrite =
+        writer->GetMetrics()
+            .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI."
+                        "Aggregator.timeWallWrite")
+            ->GetValueAsInt() /
+        1e9;
     bytes = writer->GetMetrics()
                 .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI."
                             "Aggregator.szWritePayload")
@@ -185,14 +207,14 @@ int main(int argc, char *argv[]) {
     if (sendData) {
       printf(" === total time: %f s, time writing: %f s,"
              " average per process: %f s ===\n",
-             duration.count(), wallWrite, wallWrite / size);
+             duration.count(), wallAggregatorWrite, wallAggregatorWrite / size);
     } else {
       printf(" === total time: %f s, time writing (on aggregator): %f s ===\n",
-             duration.count(), wallWrite);
+             duration.count(), wallAggregatorWrite);
     }
     printf(" === data volume: %f GB (%lu bytes) ===\n", bytes / 1e9, bytes);
     if (sendData) {
-      auto bandwidthWrite = bytes / 1e6 / wallWrite;
+      auto bandwidthWrite = bytes / 1e6 / wallAggregatorWrite;
       printf(" === bandwidth: %f MB/s, of write time: %f MB/s ===\n",
              bandwidthTotal, bandwidthWrite);
     } else {
