@@ -236,6 +236,7 @@ public:
     fBufferedColumns.at(columnHandle.fPhysicalId).fIsSuppressed = true;
   }
   void CommitPage(ColumnHandle_t columnHandle, const RPage &page) final {
+    assert(!fOptions->GetUseBufferedWrite());
     auto &pageBuf =
         fBufferedColumns.at(columnHandle.fPhysicalId).fPages.emplace_back();
     auto bufferSize =
@@ -259,6 +260,7 @@ public:
   }
   void
   CommitSealedPageV(std::span<RPageStorage::RSealedPageGroup> ranges) final {
+    assert(fOptions->GetUseBufferedWrite());
     for (auto &range : ranges) {
       auto &columnBuf = fBufferedColumns.at(range.fPhysicalColumnId);
       for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
@@ -266,14 +268,9 @@ public:
         columnBuf.fNElements += sealedPageIt->GetNElements();
 
         auto &pageBuf = columnBuf.fPages.emplace_back();
+        // We can just copy the sealed page: The outer RPageSinkBuf will keep
+        // the buffers around after CommitCluster.
         pageBuf.fSealedPage = *sealedPageIt;
-        // Copy the sealed page buffer; TODO: maybe this is not needed with
-        // RPageSinkBuf?
-        auto bufferSize = sealedPageIt->GetBufferSize();
-        pageBuf.fBuffer =
-            std::unique_ptr<unsigned char[]>(new unsigned char[bufferSize]);
-        memcpy(pageBuf.fBuffer.get(), sealedPageIt->GetBuffer(), bufferSize);
-        pageBuf.fSealedPage.SetBuffer(pageBuf.fBuffer.get());
       }
     }
   }
