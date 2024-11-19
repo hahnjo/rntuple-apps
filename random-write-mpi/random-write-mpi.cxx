@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
   long entries = std::atol(argv[1]);
   // mode = 0: sending all data to the writer
   // mode = 1: sending only metadata, payload written by individual processes
-  // modes 2 and 3 employ the same implementation, but enable Direct I/O
+  // modes larger than 16 employ the same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 2) {
     mode = atoi(argv[2]);
@@ -76,7 +76,7 @@ int main(int argc, char *argv[]) {
   config.fNTupleName = "random";
   config.fStorage = Filename;
   config.fOptions.SetCompression(compression);
-  if (mode & 2) {
+  if (mode & 0x10) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);

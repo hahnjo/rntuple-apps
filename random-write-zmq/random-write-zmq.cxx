@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
   int procs = std::atoi(argv[2]);
   // mode = 0: sending all data to the writer
   // mode = 1: sending only metadata, payload written by individual processes
-  // modes 2 and 3 employ the same implementation, but enable Direct I/O
+  // modes larger than 16 employ the same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 3) {
     mode = atoi(argv[3]);
@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
   config.fStorage = Filename;
   config.fEndpoint = "tcp://127.0.0.1:5555";
   config.fOptions.SetCompression(compression);
-  if (mode & 2) {
+  if (mode & 0x10) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
