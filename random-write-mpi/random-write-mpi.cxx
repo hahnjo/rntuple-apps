@@ -82,6 +82,7 @@ int main(int argc, char *argv[]) {
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
   bool sendData = !(mode & 1);
   config.fSendData = sendData;
+  config.fReduceRootContention = !!(mode & 2);
 
   // Prepare the data.
   std::mt19937 generator;

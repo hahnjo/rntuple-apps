@@ -34,6 +34,8 @@ public:
     /// themselves. This mode is more efficient, but requires that all processes
     /// can access the same file.
     bool fSendData = false;
+    /// Whether to reduce contention in the MPI library on the root.
+    bool fReduceRootContention = true;
   };
 
 private:
