@@ -105,7 +105,7 @@ public:
   void InitImpl(unsigned char *serializedHeader,
                 std::uint32_t length) override {
     // Copied from RPageSinkFile::InitImpl
-    auto zipBuffer = std::make_unique<unsigned char[]>(length);
+    std::unique_ptr<unsigned char[]> zipBuffer(new unsigned char[length]);
     auto szZipHeader = fCompressor->Zip(
         serializedHeader, length, GetWriteOptions().GetCompression(),
         RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
@@ -220,7 +220,7 @@ public:
   RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList,
                                         std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitClusterGroupImpl
-    auto bufPageListZip = std::make_unique<unsigned char[]>(length);
+    std::unique_ptr<unsigned char[]> bufPageListZip(new unsigned char[length]);
     auto szPageListZip = fCompressor->Zip(
         serializedPageList, length, GetWriteOptions().GetCompression(),
         RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
@@ -235,7 +235,7 @@ public:
                          std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitDatasetImpl
     fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
-    auto bufFooterZip = std::make_unique<unsigned char[]>(length);
+    std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
     auto szFooterZip = fCompressor->Zip(
         serializedFooter, length, GetWriteOptions().GetCompression(),
         RNTupleCompressor::MakeMemCopyWriter(bufFooterZip.get()));
@@ -319,7 +319,7 @@ public:
 
       std::unique_ptr<unsigned char[]> buf;
       if (count > 0) {
-        buf = std::make_unique<unsigned char[]>(count);
+        buf.reset(new unsigned char[count]);
       }
 
       MPI_Recv(buf.get(), count, MPI_BYTE, source, kTagAggregator, fComm,
@@ -691,7 +691,7 @@ public:
     if (fSendData) {
       szBuffer += sumSealedPages;
     }
-    auto buffer = std::make_unique<unsigned char[]>(szBuffer);
+    std::unique_ptr<unsigned char[]> buffer(new unsigned char[szBuffer]);
     RNTupleSerializer::SerializePageList(buffer.get(), descriptor,
                                          physClusterIDs, fSerializationContext);
 
