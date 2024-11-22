@@ -326,7 +326,7 @@ public:
                MPI_STATUS_IGNORE);
 
       if (count == 0) {
-        // The process signaled it is done. Send back an empty message.
+        // The process signaled it is done.
         processes--;
         continue;
       }
