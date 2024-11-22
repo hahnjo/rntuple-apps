@@ -86,8 +86,8 @@ int main(int argc, char *argv[]) {
 
   // Prepare the data.
   std::mt19937 generator;
-  std::poisson_distribution<> poisson(5);
-  std::uniform_real_distribution<> uniform(0.0, 100.0);
+  std::poisson_distribution<int> poisson(5);
+  std::uniform_real_distribution<float> uniform(0.0, 100.0);
 
   // We set the maximum unzipped page size to 128 * 1024; draw enough random
   // numbers to make sure we have enough for one page to avoid compression from
@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
   // same-page merging.
   size_t RandomNumbers = config.fOptions.GetMaxUnzippedPageSize() + 13;
   std::vector<int> numParticlesV(RandomNumbers);
-  std::vector<double> energiesV(RandomNumbers);
+  std::vector<float> energiesV(RandomNumbers);
   for (size_t i = 0; i < RandomNumbers; i++) {
     numParticlesV[i] = poisson(generator);
     energiesV[i] = uniform(generator);
