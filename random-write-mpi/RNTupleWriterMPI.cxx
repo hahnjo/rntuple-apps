@@ -61,6 +61,8 @@ using ROOT::Experimental::Internal::RFieldDescriptorBuilder;
 using ROOT::Experimental::Internal::RNTupleCompressor;
 using ROOT::Experimental::Internal::RNTupleDescriptorBuilder;
 using ROOT::Experimental::Internal::RNTupleFileWriter;
+static constexpr auto kBlobKeyLen =
+    ROOT::Experimental::Internal::RNTupleFileWriter::kBlobKeyLen;
 using ROOT::Experimental::Internal::RNTupleModelChangeset;
 using ROOT::Experimental::Internal::RNTupleSerializer;
 using ROOT::Experimental::Internal::RPage;
@@ -75,6 +77,8 @@ class RPageSinkMPIAggregator final : public RPagePersistentSink {
   std::unique_ptr<RNTupleFileWriter> fWriter;
   /// The last offset in the file that was reserved in CommitSealedPageVImpl.
   std::uint64_t fLastOffset = 0;
+  /// The current offset in the file.
+  std::uint64_t fCurrentOffset = 0;
   /// Whether the processes are expected to send the payload data.
   bool fProcessesSendData;
 
@@ -109,7 +113,25 @@ public:
     auto szZipHeader = fCompressor->Zip(
         serializedHeader, length, GetWriteOptions().GetCompression(),
         RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
-    fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
+    auto offset =
+        fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
+    fCurrentOffset = offset + szZipHeader;
+    if (!fProcessesSendData &&
+        fCurrentOffset % kAggregatorWriteAlignment != 0) {
+      // Insert a dummy blob to make the offset aligned. For this, we need at
+      // least kBlobKeyLen bytes to write the key.
+      auto dummyOffset = fCurrentOffset + kBlobKeyLen;
+      std::size_t bytes = 0;
+      if (dummyOffset % kAggregatorWriteAlignment != 0) {
+        bytes =
+            kAggregatorWriteAlignment - dummyOffset % kAggregatorWriteAlignment;
+      }
+      offset = fWriter->ReserveBlob(bytes, 0);
+      R__ASSERT(offset == dummyOffset);
+      fCurrentOffset = offset + bytes;
+    }
+    R__ASSERT(fProcessesSendData ||
+              fCurrentOffset % kAggregatorWriteAlignment == 0);
   };
 
   RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
@@ -165,11 +187,13 @@ public:
       std::uint64_t padding = 0;
       if (!fProcessesSendData) {
         // If the processes write the data directly, we need to pad the reserved
-        // buffer accordingly to avoid overlapping writes. For the returned
-        // offset, the worst case is one trailing byte.
-        padding = kAggregatorWriteAlignment - 1;
-        // For the end of the buffer, we just need to make sure there are enough
-        // bytes behind the last sealed page to reach the next buffer.
+        // buffer accordingly to avoid overlapping writes. For the key header,
+        // we know that the current offset is aligned and we need to pad until
+        // the next alignment boundary.
+        R__ASSERT(fCurrentOffset % kAggregatorWriteAlignment == 0);
+        padding = kAggregatorWriteAlignment - kBlobKeyLen;
+        // For the end of the buffer, we again need to pad until the next
+        // alignment boundary.
         if (sumSealedPages % kAggregatorWriteAlignment != 0) {
           padding += kAggregatorWriteAlignment -
                      sumSealedPages % kAggregatorWriteAlignment;
@@ -177,9 +201,14 @@ public:
       }
       std::uint64_t offset =
           fWriter->ReserveBlob(sumSealedPages + padding, sumBytesPacked);
-      if (!fProcessesSendData && offset % kAggregatorWriteAlignment != 0) {
-        offset +=
-            kAggregatorWriteAlignment - offset % kAggregatorWriteAlignment;
+      R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
+      fCurrentOffset = offset + sumSealedPages + padding;
+      R__ASSERT(fProcessesSendData ||
+                fCurrentOffset % kAggregatorWriteAlignment == 0);
+
+      if (!fProcessesSendData) {
+        R__ASSERT(offset % kAggregatorWriteAlignment == kBlobKeyLen);
+        offset += kAggregatorWriteAlignment - kBlobKeyLen;
       }
       fLastOffset = offset;
 
