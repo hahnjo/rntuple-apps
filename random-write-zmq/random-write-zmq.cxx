@@ -72,6 +72,9 @@ int main(int argc, char *argv[]) {
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
   config.fSendData = !(mode & 1);
 
+  printf("sendData: %d, Direct I/O: %d\n\n", config.fSendData,
+         config.fOptions.GetUseDirectIO());
+
   // Prepare the data, before forking.
   std::mt19937 generator;
   std::poisson_distribution<int> poisson(5);

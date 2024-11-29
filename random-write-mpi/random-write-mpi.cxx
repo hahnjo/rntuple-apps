@@ -47,6 +47,7 @@ int main(int argc, char *argv[]) {
   int rank, size;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
+  static constexpr int kRoot = 0;
 
   if (argc < 2) {
     fprintf(stderr, "Usage: ./random-write-mpi entries <mode> <compression>\n");
@@ -84,6 +85,12 @@ int main(int argc, char *argv[]) {
   config.fSendData = sendData;
   config.fReduceRootContention = !!(mode & 2);
 
+  if (rank == kRoot) {
+    printf("sendData: %d, reduceRootContention: %d, Direct I/O: %d\n\n",
+           config.fSendData, config.fReduceRootContention,
+           config.fOptions.GetUseDirectIO());
+  }
+
   // Prepare the data.
   std::mt19937 generator;
   std::poisson_distribution<int> poisson(5);
@@ -112,7 +119,6 @@ int main(int argc, char *argv[]) {
   auto start = std::chrono::steady_clock::now();
 
   // Create the writer and start filling the RNTuple.
-  static constexpr int kRoot = 0;
   auto writer =
       RNTupleWriterMPI::Recreate(std::move(config), kRoot, MPI_COMM_WORLD);
   writer->EnableMetrics();
