@@ -81,9 +81,9 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
-  bool sendData = !(mode & 1);
+  bool sendData = !(mode & 3);
   config.fSendData = sendData;
-  config.fReduceRootContention = !!(mode & 2);
+  config.fReduceRootContention = !!(mode & 4);
 
   if (rank == kRoot) {
     printf("sendData: %d, reduceRootContention: %d, Direct I/O: %d\n\n",
