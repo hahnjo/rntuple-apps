@@ -175,12 +175,12 @@ int main(int argc, char *argv[]) {
             .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI.timeWallWrite")
             ->GetValueAsInt() /
         1e9;
-    sprintf(writing, ", writing: %f s", wallWrite);
+    sprintf(&writing[0], ", writing: %f s", wallWrite);
   }
   printf("rank #%d: total: %f s, zipping: %f, in critical section: %f s,"
          " communicating: %f s (fraction c = %f)%s\n",
          rank, rankDuration.count(), wallZip, wallCS, wallCommAggregator,
-         wallCommAggregator / rankDuration.count(), writing);
+         wallCommAggregator / rankDuration.count(), &writing[0]);
 
   // Synchronize the ranks to make sure all data is written.
   MPI_Barrier(MPI_COMM_WORLD);

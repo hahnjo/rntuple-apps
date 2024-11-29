@@ -776,11 +776,11 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
     if (!fClientsSendData) {
       std::uint64_t offset =
           static_cast<RPageSinkZeroMQServer *>(fSink.get())->GetLastOffset();
-      RNTupleSerializer::SerializeUInt64(offset, &buffer);
+      RNTupleSerializer::SerializeUInt64(offset, &buffer[0]);
       size = sizeof(std::uint64_t);
     }
 
-    ZMQSend(fSocket, &buffer, size);
+    ZMQSend(fSocket, &buffer[0], size);
   }
 }
 

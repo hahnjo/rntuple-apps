@@ -401,10 +401,10 @@ public:
       unsigned char bufOffset[sizeof(std::uint64_t)];
       if (!fProcessesSendData) {
         std::uint64_t offset = fSink->GetLastOffset();
-        RNTupleSerializer::SerializeUInt64(offset, &bufOffset);
+        RNTupleSerializer::SerializeUInt64(offset, &bufOffset[0]);
         size = sizeof(std::uint64_t);
       }
-      MPI_Send(&bufOffset, size, MPI_BYTE, source, kTagOffset, fComm);
+      MPI_Send(&bufOffset[0], size, MPI_BYTE, source, kTagOffset, fComm);
 
       if (fReduceRootContention && source == fRoot) {
         SignalFromAggregator();
@@ -721,7 +721,7 @@ public:
 
       // Get back the reply, the message is empty unless we did not send the
       // data.
-      MPI_Irecv(&bufOffset, sizeof(bufOffset), MPI_BYTE, fRoot, kTagOffset,
+      MPI_Irecv(&bufOffset[0], sizeof(bufOffset), MPI_BYTE, fRoot, kTagOffset,
                 fComm, &req[1]);
 
       if (fReduceRootContention && fAggregator) {
@@ -756,7 +756,7 @@ public:
       assert(count == sizeof(std::uint64_t));
 #endif
       std::uint64_t offset;
-      RNTupleSerializer::DeserializeUInt64(&bufOffset, offset);
+      RNTupleSerializer::DeserializeUInt64(&bufOffset[0], offset);
       assert(offset % kAggregatorWriteAlignment == 0);
       std::uint64_t blockOffset = offset;
 
