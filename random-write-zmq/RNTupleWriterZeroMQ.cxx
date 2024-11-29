@@ -136,11 +136,14 @@ class RPageSinkZeroMQClient final : public RPageSink {
   unsigned char *fBlock = nullptr;
   /// Whether to send the payload data to the server.
   bool fSendData;
+  /// Whether the server sends the key.
+  bool fServerSendsKey;
 
 public:
   RPageSinkZeroMQClient(const RNTupleWriterZeroMQ::Config &config)
       : RPageSink(config.fNTupleName, config.fOptions),
-        fStorage(config.fStorage), fSendData(config.fSendData) {
+        fStorage(config.fStorage), fSendData(config.fSendData),
+        fServerSendsKey(config.fSendKey) {
     fContext = zmq_ctx_new();
     if (!fContext) {
       throw RException(R__FAIL("zmq_ctx_new() failed"));
@@ -376,11 +379,26 @@ public:
         }
       }
 
-      assert(zmq_msg_size(&msg) == sizeof(std::uint64_t));
+      if (!fServerSendsKey) {
+        assert(zmq_msg_size(&msg) == sizeof(std::uint64_t));
+      } else {
+        assert(zmq_msg_size(&msg) == sizeof(std::uint64_t) + kBlobKeyLen);
+      }
+      auto *recv = static_cast<const unsigned char *>(zmq_msg_data(&msg));
       std::uint64_t offset;
-      RNTupleSerializer::DeserializeUInt64(zmq_msg_data(&msg), offset);
-      assert(offset % kServerClientWriteAlignment == 0);
+      RNTupleSerializer::DeserializeUInt64(recv, offset);
       std::uint64_t blockOffset = offset;
+
+      if (!fServerSendsKey) {
+        assert(offset % kServerClientWriteAlignment == 0);
+      } else {
+        assert(offset % kServerClientWriteAlignment == kBlobKeyLen);
+        blockOffset -= kBlobKeyLen;
+        // If the server sent the key, write it now.
+        static_assert(kBlobKeyLen < kClientWriteBufferSize);
+        memcpy(fBlock, &recv[sizeof(std::uint64_t)], kBlobKeyLen);
+      }
+      assert(blockOffset % kServerClientWriteAlignment == 0);
 
       // Write the sealed page buffers in the same order.
       for (auto &columnBuf : fBufferedColumns) {
@@ -477,13 +495,17 @@ class RPageSinkZeroMQServer final : public RPagePersistentSink {
   std::uint64_t fLastOffset = 0;
   /// The current offset in the file.
   std::uint64_t fCurrentOffset = 0;
+  /// The key buffer when sending to the processes.
+  unsigned char fKeyBuffer[kBlobKeyLen];
   /// Whether the clients are expected to send the payload data.
   bool fClientsSendData;
+  /// Whether to send the key to the clients instead of writing.
+  bool fSendKey;
 
 public:
   RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
       : RPagePersistentSink(config.fNTupleName, config.fOptions),
-        fClientsSendData(config.fSendData) {
+        fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
     fCompressor = std::make_unique<RNTupleCompressor>();
     EnableDefaultMetrics("RPageSinkZeroMQ");
     // No support for merging pages at the moment
@@ -503,6 +525,7 @@ public:
   }
 
   std::uint64_t GetLastOffset() const { return fLastOffset; }
+  const unsigned char *GetKeyBuffer() const { return &fKeyBuffer[0]; }
 
   void InitImpl(unsigned char *serializedHeader,
                 std::uint32_t length) override {
@@ -584,21 +607,35 @@ public:
 
       std::uint64_t padding = 0;
       if (!fClientsSendData) {
-        // If the client writes the data directly, we need to pad the reserved
-        // buffer accordingly to avoid overlapping writes. For the key header,
-        // we know that the current offset is aligned and we need to pad until
-        // the next alignment boundary.
+        // If the clients write the data directly, we need to pad the reserved
+        // buffer accordingly to avoid overlapping writes.
         R__ASSERT(fCurrentOffset % kServerClientWriteAlignment == 0);
-        padding = kServerClientWriteAlignment - kBlobKeyLen;
-        // For the end of the buffer, we again need to pad until the next
-        // alignment boundary.
-        if (sumSealedPages % kServerClientWriteAlignment != 0) {
-          padding += kServerClientWriteAlignment -
-                     sumSealedPages % kServerClientWriteAlignment;
+        if (!fSendKey) {
+          // For the key header, we know that the current offset is aligned and
+          // we need to pad until the next alignment boundary.
+          padding = kServerClientWriteAlignment - kBlobKeyLen;
+          // For the end of the buffer, we again need to pad until the next
+          // alignment boundary.
+          if (sumSealedPages % kServerClientWriteAlignment != 0) {
+            padding += kServerClientWriteAlignment -
+                       sumSealedPages % kServerClientWriteAlignment;
+          }
+        } else {
+          // If the clients also write the key, need to factor this in.
+          auto totalSize = kBlobKeyLen + sumSealedPages;
+          // Then we need to pad until the next alignment boundary.
+          if (totalSize % kServerClientWriteAlignment != 0) {
+            padding += kServerClientWriteAlignment -
+                       totalSize % kServerClientWriteAlignment;
+          }
         }
       }
-      std::uint64_t offset =
-          fWriter->ReserveBlob(sumSealedPages + padding, sumBytesPacked);
+      unsigned char *keyBuffer = nullptr;
+      if (fSendKey) {
+        keyBuffer = fKeyBuffer;
+      }
+      std::uint64_t offset = fWriter->ReserveBlob(sumSealedPages + padding,
+                                                  sumBytesPacked, keyBuffer);
       R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
       fCurrentOffset = offset + sumSealedPages + padding;
       R__ASSERT(fClientsSendData ||
@@ -606,7 +643,9 @@ public:
 
       if (!fClientsSendData) {
         R__ASSERT(offset % kServerClientWriteAlignment == kBlobKeyLen);
-        offset += kServerClientWriteAlignment - kBlobKeyLen;
+        if (!fSendKey) {
+          offset += kServerClientWriteAlignment - kBlobKeyLen;
+        }
       }
       fLastOffset = offset;
 
@@ -675,7 +714,7 @@ public:
 
 RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
     : fModel(std::move(config.fModel)), fMetrics("RNTupleWriterZeroMQ"),
-      fClientsSendData(config.fSendData) {
+      fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
   fContext = zmq_ctx_new();
   if (!fContext) {
     throw RException(R__FAIL("zmq_ctx_new() failed"));
@@ -801,12 +840,16 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
     // Send the response.
     std::size_t size = 0;
-    unsigned char buffer[sizeof(std::uint64_t)];
+    unsigned char buffer[sizeof(std::uint64_t) + kBlobKeyLen];
     if (!fClientsSendData) {
-      std::uint64_t offset =
-          static_cast<RPageSinkZeroMQServer *>(fSink.get())->GetLastOffset();
+      auto *zmqSink = static_cast<RPageSinkZeroMQServer *>(fSink.get());
+      std::uint64_t offset = zmqSink->GetLastOffset();
       RNTupleSerializer::SerializeUInt64(offset, &buffer[0]);
       size = sizeof(std::uint64_t);
+      if (fSendKey) {
+        memcpy(&buffer[size], zmqSink->GetKeyBuffer(), kBlobKeyLen);
+        size += kBlobKeyLen;
+      }
     }
 
     ZMQSend(fSocket, &buffer[0], size);
@@ -815,6 +858,10 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
 std::unique_ptr<RNTupleWriterZeroMQ>
 RNTupleWriterZeroMQ::Recreate(Config config) {
+  if (config.fSendKey && config.fSendData) {
+    throw RException(R__FAIL("sending key requires writing by all processes"));
+  }
+
   return std::unique_ptr<RNTupleWriterZeroMQ>(
       new RNTupleWriterZeroMQ(std::move(config)));
 }

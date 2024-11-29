@@ -45,6 +45,8 @@ int main(int argc, char *argv[]) {
   int procs = std::atoi(argv[2]);
   // mode = 0: sending all data to the writer
   // mode = 1: sending only metadata, payload written by individual processes
+  // mode = 2: sending only metadata, paylad *and preceeding key* written by
+  //           individual processes
   // modes larger than 16 employ the same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 3) {
@@ -70,10 +72,11 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
-  config.fSendData = !(mode & 1);
+  config.fSendData = (mode & 3) == 0;
+  config.fSendKey = (mode & 3) == 2;
 
-  printf("sendData: %d, Direct I/O: %d\n\n", config.fSendData,
-         config.fOptions.GetUseDirectIO());
+  printf("sendData: %d, sendKey: %d, Direct I/O: %d\n\n", config.fSendData,
+         config.fSendKey, config.fOptions.GetUseDirectIO());
   fflush(stdout);
 
   // Prepare the data, before forking.

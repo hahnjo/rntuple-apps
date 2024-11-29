@@ -34,6 +34,10 @@ public:
     /// themselves. This mode is more efficient, but requires that all processes
     /// can access the same file.
     bool fSendData = false;
+    /// Whether to send the key via MPI. If yes, processes will write the key
+    /// before writing the payload data. Only makes sense together with the
+    /// previous option fSendData.
+    bool fSendKey = false;
     /// Whether to reduce contention in the MPI library on the root.
     bool fReduceRootContention = true;
   };

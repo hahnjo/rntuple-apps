@@ -43,6 +43,10 @@ public:
     /// themselves. This mode is more efficient, but requires that all processes
     /// can access the same file.
     bool fSendData = false;
+    /// Whether to send the key to the clients. If yes, clients will write the
+    /// key before writing the payload data. Only makes sense together with the
+    /// previous option fSendData.
+    bool fSendKey = false;
   };
 
 private:
@@ -59,6 +63,8 @@ private:
   ROOT::Experimental::Detail::RNTupleMetrics fMetrics;
   /// Whether the clients are expected to send the payload data.
   bool fClientsSendData;
+  /// Whether to send the key to the clients instead of writing.
+  bool fSendKey;
 
   RNTupleWriterZeroMQ(Config config);
 

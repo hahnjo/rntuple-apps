@@ -57,6 +57,8 @@ int main(int argc, char *argv[]) {
   long entries = std::atol(argv[1]);
   // mode = 0: sending all data to the writer
   // mode = 1: sending only metadata, payload written by individual processes
+  // mode = 2: sending only metadata, paylad *and preceeding key* written by
+  //           individual processes
   // modes larger than 16 employ the same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 2) {
@@ -81,13 +83,15 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
-  bool sendData = !(mode & 3);
+  bool sendData = (mode & 3) == 0;
   config.fSendData = sendData;
+  config.fSendKey = (mode & 3) == 2;
   config.fReduceRootContention = !!(mode & 4);
 
   if (rank == kRoot) {
-    printf("sendData: %d, reduceRootContention: %d, Direct I/O: %d\n\n",
-           config.fSendData, config.fReduceRootContention,
+    printf("sendData: %d, sendKey: %d, reduceRootContention: %d, Direct I/O: %d"
+           "\n\n",
+           config.fSendData, config.fSendKey, config.fReduceRootContention,
            config.fOptions.GetUseDirectIO());
   }
 
