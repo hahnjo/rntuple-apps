@@ -74,6 +74,7 @@ int main(int argc, char *argv[]) {
 
   printf("sendData: %d, Direct I/O: %d\n\n", config.fSendData,
          config.fOptions.GetUseDirectIO());
+  fflush(stdout);
 
   // Prepare the data, before forking.
   std::mt19937 generator;
