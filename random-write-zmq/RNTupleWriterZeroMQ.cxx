@@ -68,7 +68,6 @@ void ZMQSend(void *socket, const void *buf, std::size_t len) {
   }
 }
 
-using ROOT::Experimental::ClusterSize_t;
 using ROOT::Experimental::DescriptorId_t;
 using ROOT::Experimental::NTupleSize_t;
 using ROOT::Experimental::RClusterDescriptor;
@@ -108,7 +107,7 @@ class RPageSinkZeroMQClient final : public RPageSink {
     };
 
     std::vector<RPageBuf> fPages;
-    ClusterSize_t fNElements{0};
+    NTupleSize_t fNElements{0};
     bool fIsSuppressed = false;
   };
 
@@ -312,7 +311,7 @@ public:
           pageInfo.fNElements = pageBuf.fSealedPage.GetNElements();
           // For the locator, we only set the (compressed) size.
           auto sealedBufferSize = pageBuf.fSealedPage.GetBufferSize();
-          pageInfo.fLocator.fBytesOnStorage = sealedBufferSize;
+          pageInfo.fLocator.SetNBytesOnStorage(sealedBufferSize);
           pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
           sumSealedPages += sealedBufferSize;
           pageRange.fPageInfos.emplace_back(pageInfo);
@@ -664,8 +663,8 @@ public:
             assert(!fClientsSendData);
           }
           RNTupleLocator locator;
-          locator.fPosition = offset;
-          locator.fBytesOnStorage = sealedPage.GetDataSize();
+          locator.SetPosition(offset);
+          locator.SetNBytesOnStorage(sealedPage.GetDataSize());
           locators.push_back(locator);
           offset += sealedPage.GetBufferSize();
         }
@@ -691,9 +690,9 @@ public:
         RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
 
     RNTupleLocator result;
-    result.fBytesOnStorage = szPageListZip;
-    result.fPosition =
-        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length);
+    result.SetNBytesOnStorage(szPageListZip);
+    result.SetPosition(
+        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
     return result;
   }
   void CommitDatasetImpl(unsigned char *serializedFooter,
@@ -812,7 +811,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
       auto &pageRange = clusterDescriptor.GetPageRange(columnId);
       RPageStorage::SealedPageSequence_t sealedPages;
       for (const auto &pageInfo : pageRange.fPageInfos) {
-        auto bytesOnStorage = pageInfo.fLocator.fBytesOnStorage;
+        auto bytesOnStorage = pageInfo.fLocator.GetNBytesOnStorage();
         sealedPages.emplace_back(ptr, bytesOnStorage, pageInfo.fNElements,
                                  pageInfo.fHasChecksum);
         if (ptr) {
