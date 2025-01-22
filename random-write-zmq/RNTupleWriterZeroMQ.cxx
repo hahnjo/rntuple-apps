@@ -2,6 +2,7 @@
 
 #include "RNTupleWriterZeroMQ.hxx"
 
+#include <ROOT/RError.hxx>
 #include <ROOT/RMiniFile.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
@@ -30,14 +31,12 @@ static constexpr std::size_t kClientWriteBufferSize = 4 * 1024 * 1024;
 
 namespace {
 
-using ROOT::Experimental::RException;
-
 /// Receive a message from the ZeroMQ socket. This method initializes msg and
 /// takes care of retries when interrupted.
 void ZMQMsgRecv(zmq_msg_t *msg, void *socket) {
   int rc = zmq_msg_init(msg);
   if (rc) {
-    throw RException(R__FAIL("zmq_msg_init() failed"));
+    throw ROOT::RException(R__FAIL("zmq_msg_init() failed"));
   }
   int nbytes;
   while (true) {
@@ -47,7 +46,7 @@ void ZMQMsgRecv(zmq_msg_t *msg, void *socket) {
         // Try again.
         continue;
       }
-      throw RException(R__FAIL("zmq_msg_recv() failed"));
+      throw ROOT::RException(R__FAIL("zmq_msg_recv() failed"));
     }
     break;
   }
@@ -63,7 +62,7 @@ void ZMQSend(void *socket, const void *buf, std::size_t len) {
         // Try again.
         continue;
       }
-      throw RException(R__FAIL("zmq_send() failed"));
+      throw ROOT::RException(R__FAIL("zmq_send() failed"));
     }
     break;
   }
@@ -146,16 +145,16 @@ public:
         fServerSendsKey(config.fSendKey) {
     fContext = zmq_ctx_new();
     if (!fContext) {
-      throw RException(R__FAIL("zmq_ctx_new() failed"));
+      throw ROOT::RException(R__FAIL("zmq_ctx_new() failed"));
     }
     fSocket = zmq_socket(fContext, ZMQ_REQ);
     if (!fSocket) {
-      throw RException(R__FAIL("zmq_socket() failed"));
+      throw ROOT::RException(R__FAIL("zmq_socket() failed"));
     }
     std::string endpoint(config.fEndpoint);
     int rc = zmq_connect(fSocket, endpoint.c_str());
     if (rc) {
-      throw RException(R__FAIL("zmq_connect() failed"));
+      throw ROOT::RException(R__FAIL("zmq_connect() failed"));
     }
 
     if (!fSendData) {
@@ -229,11 +228,11 @@ public:
     fSerializationContext.MapSchema(descriptor, /*forHeaderExtension=*/false);
   }
   void UpdateSchema(const RNTupleModelChangeset &, NTupleSize_t) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("UpdateSchema not supported via RPageSinkZeroMQClient"));
   }
   void UpdateExtraTypeInfo(const RExtraTypeInfoDescriptor &) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("UpdateExtraTypeInfo not supported via RPageSinkZeroMQClient"));
   }
 
@@ -260,7 +259,7 @@ public:
     pageBuf.fSealedPage = SealPage(config);
   }
   void CommitSealedPage(DescriptorId_t, const RSealedPage &) final {
-    throw RException(R__FAIL(
+    throw ROOT::RException(R__FAIL(
         "should never commit a single sealed page via RPageSinkZeroMQClient"));
   }
   void
@@ -281,11 +280,11 @@ public:
   }
 
   RStagedCluster StageCluster(NTupleSize_t) final {
-    throw RException(R__FAIL(
+    throw ROOT::RException(R__FAIL(
         "staged cluster committing not supported via RPageSinkZeroMQClient"));
   }
   void CommitStagedClusters(std::span<RStagedCluster>) final {
-    throw RException(R__FAIL(
+    throw ROOT::RException(R__FAIL(
         "staged cluster committing not supported via RPageSinkZeroMQClient"));
   }
 
@@ -375,7 +374,7 @@ public:
         }
         fFileDes = open(fStorage.c_str(), flags, 0666);
         if (fFileDes < 0) {
-          throw RException(R__FAIL("open() failed"));
+          throw ROOT::RException(R__FAIL("open() failed"));
         }
       }
 
@@ -413,7 +412,7 @@ public:
               std::size_t retval =
                   pwrite(fFileDes, fBlock, kClientWriteBufferSize, blockOffset);
               if (retval != kClientWriteBufferSize)
-                throw RException(
+                throw ROOT::RException(
                     R__FAIL(std::string("write failed: ") + strerror(errno)));
 
               // Null the buffer contents for good measure.
@@ -444,7 +443,7 @@ public:
         std::size_t retval =
             pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
         if (retval != lastBlockSize)
-          throw RException(
+          throw ROOT::RException(
               R__FAIL(std::string("write failed: ") + strerror(errno)));
 
         // Null the buffer contents for good measure.
@@ -454,7 +453,7 @@ public:
 
     int rc = zmq_msg_close(&msg);
     if (rc) {
-      throw RException(R__FAIL("zmq_msg_close() failed"));
+      throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
     }
 
     // Clean up all buffered columns and pages.
@@ -476,12 +475,12 @@ public:
     ZMQMsgRecv(&msg, fSocket);
     std::size_t msgSize = zmq_msg_size(&msg);
     if (msgSize != 0) {
-      throw RException(R__FAIL("final message was not empty"));
+      throw ROOT::RException(R__FAIL("final message was not empty"));
     }
 
     int rc = zmq_msg_close(&msg);
     if (rc) {
-      throw RException(R__FAIL("zmq_msg_close() failed"));
+      throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
     }
   }
 };
@@ -556,13 +555,13 @@ public:
   };
 
   RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
     return {};
   }
   RNTupleLocator CommitSealedPageImpl(DescriptorId_t,
                                       const RSealedPage &) override {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
     return {};
   }
@@ -717,16 +716,16 @@ RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
       fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
   fContext = zmq_ctx_new();
   if (!fContext) {
-    throw RException(R__FAIL("zmq_ctx_new() failed"));
+    throw ROOT::RException(R__FAIL("zmq_ctx_new() failed"));
   }
   fSocket = zmq_socket(fContext, ZMQ_REP);
   if (!fSocket) {
-    throw RException(R__FAIL("zmq_socket() failed"));
+    throw ROOT::RException(R__FAIL("zmq_socket() failed"));
   }
   std::string endpoint(config.fEndpoint);
   int rc = zmq_bind(fSocket, endpoint.c_str());
   if (rc) {
-    throw RException(R__FAIL("zmq_bind() failed"));
+    throw ROOT::RException(R__FAIL("zmq_bind() failed"));
   }
 
   fSink = std::make_unique<RPageSinkZeroMQServer>(config);
@@ -758,7 +757,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
       rc = zmq_msg_close(&msg);
       if (rc) {
-        throw RException(R__FAIL("zmq_msg_close() failed"));
+        throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
       }
 
       ZMQSend(fSocket, NULL, 0);
@@ -835,7 +834,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
     rc = zmq_msg_close(&msg);
     if (rc) {
-      throw RException(R__FAIL("zmq_msg_close() failed"));
+      throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
     }
 
     // Send the response.
@@ -859,7 +858,8 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 std::unique_ptr<RNTupleWriterZeroMQ>
 RNTupleWriterZeroMQ::Recreate(Config config) {
   if (config.fSendKey && config.fSendData) {
-    throw RException(R__FAIL("sending key requires writing by all processes"));
+    throw ROOT::RException(
+        R__FAIL("sending key requires writing by all processes"));
   }
 
   return std::unique_ptr<RNTupleWriterZeroMQ>(

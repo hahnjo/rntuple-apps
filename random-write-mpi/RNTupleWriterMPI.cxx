@@ -2,6 +2,7 @@
 
 #include "RNTupleWriterMPI.hxx"
 
+#include <ROOT/RError.hxx>
 #include <ROOT/RMiniFile.hxx>
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
@@ -41,7 +42,6 @@ using ROOT::Experimental::ClusterSize_t;
 using ROOT::Experimental::DescriptorId_t;
 using ROOT::Experimental::NTupleSize_t;
 using ROOT::Experimental::RClusterDescriptor;
-using ROOT::Experimental::RException;
 using ROOT::Experimental::RExtraTypeInfoDescriptor;
 using ROOT::Experimental::RNTupleDescriptor;
 using ROOT::Experimental::RNTupleLocator;
@@ -140,13 +140,13 @@ public:
   };
 
   RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
-    throw RException(R__FAIL(
+    throw ROOT::RException(R__FAIL(
         "should never commit a single page via RPageSinkMPIAggregator"));
     return {};
   }
   RNTupleLocator CommitSealedPageImpl(DescriptorId_t,
                                       const RSealedPage &) override {
-    throw RException(R__FAIL(
+    throw ROOT::RException(R__FAIL(
         "should never commit a single page via RPageSinkMPIAggregator"));
     return {};
   }
@@ -640,10 +640,11 @@ public:
     fSerializationContext.MapSchema(descriptor, /*forHeaderExtension=*/false);
   }
   void UpdateSchema(const RNTupleModelChangeset &, NTupleSize_t) final {
-    throw RException(R__FAIL("UpdateSchema not supported via RPageSinkMPI"));
+    throw ROOT::RException(
+        R__FAIL("UpdateSchema not supported via RPageSinkMPI"));
   }
   void UpdateExtraTypeInfo(const RExtraTypeInfoDescriptor &) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("UpdateExtraTypeInfo not supported via RPageSinkMPI"));
   }
 
@@ -670,7 +671,7 @@ public:
     pageBuf.fSealedPage = SealPage(config);
   }
   void CommitSealedPage(DescriptorId_t, const RSealedPage &) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("should never commit a single sealed page via RPageSinkMPI"));
   }
   void
@@ -691,11 +692,11 @@ public:
   }
 
   RStagedCluster StageCluster(NTupleSize_t) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("staged cluster committing not supported via RPageSinkMPI"));
   }
   void CommitStagedClusters(std::span<RStagedCluster>) final {
-    throw RException(
+    throw ROOT::RException(
         R__FAIL("staged cluster committing not supported via RPageSinkMPI"));
   }
 
@@ -805,7 +806,7 @@ public:
         }
         fFileDes = open(fStorage.c_str(), flags, 0666);
         if (fFileDes < 0) {
-          throw RException(R__FAIL("open() failed"));
+          throw ROOT::RException(R__FAIL("open() failed"));
         }
       }
 
@@ -850,7 +851,7 @@ public:
                 std::size_t retval = pwrite(
                     fFileDes, fBlock, kProcessWriteBufferSize, blockOffset);
                 if (retval != kProcessWriteBufferSize)
-                  throw RException(
+                  throw ROOT::RException(
                       R__FAIL(std::string("write failed: ") + strerror(errno)));
 
                 // Null the buffer contents for good measure.
@@ -881,7 +882,7 @@ public:
           std::size_t retval =
               pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
           if (retval != lastBlockSize)
-            throw RException(
+            throw ROOT::RException(
                 R__FAIL(std::string("write failed: ") + strerror(errno)));
 
           // Null the buffer contents for good measure.
@@ -915,18 +916,20 @@ public:
 std::unique_ptr<ROOT::Experimental::RNTupleWriter>
 RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
   if (config.fSendKey && config.fSendData) {
-    throw RException(R__FAIL("sending key requires writing by all processes"));
+    throw ROOT::RException(
+        R__FAIL("sending key requires writing by all processes"));
   }
 
   int flag = 0;
   MPI_Initialized(&flag);
   if (!flag) {
-    throw RException(R__FAIL("MPI library was not initialized"));
+    throw ROOT::RException(R__FAIL("MPI library was not initialized"));
   }
   int provided = -1;
   MPI_Query_thread(&provided);
   if (provided != MPI_THREAD_MULTIPLE) {
-    throw RException(R__FAIL("RNTupleWriterMPI requires MPI_THREAD_MULTIPLE"));
+    throw ROOT::RException(
+        R__FAIL("RNTupleWriterMPI requires MPI_THREAD_MULTIPLE"));
   }
 
   std::unique_ptr<ROOT::Experimental::Internal::RPageSink> sink =
