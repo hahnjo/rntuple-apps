@@ -594,6 +594,8 @@ public:
     return descriptor;
   }
 
+  NTupleSize_t GetNEntries() const final { return 0; }
+
   ColumnHandle_t AddColumn(DescriptorId_t fieldId, RColumn &column) final {
     auto columnId = fDescriptorBuilder.GetDescriptor().GetNPhysicalColumns();
     RColumnDescriptorBuilder columnBuilder;
