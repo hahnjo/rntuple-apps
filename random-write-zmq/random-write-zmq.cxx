@@ -41,8 +41,8 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  long entries = std::atol(argv[1]);
-  int procs = std::atoi(argv[2]);
+  long entries = std::stol(argv[1]);
+  int procs = std::stoi(argv[2]);
   // mode = 0: sending all data to the writer
   // mode = 1: sending only metadata, payload written by individual processes
   // mode = 2: sending only metadata, paylad *and preceeding key* written by
@@ -50,11 +50,11 @@ int main(int argc, char *argv[]) {
   // modes larger than 16 employ the same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 3) {
-    mode = atoi(argv[3]);
+    mode = std::stoi(argv[3]);
   }
   int compression = ROOT::RCompressionSetting::EDefaults::kUseGeneralPurpose;
   if (argc > 4) {
-    compression = atoi(argv[4]);
+    compression = std::stoi(argv[4]);
   }
 
   auto model = RNTupleModel::CreateBare();

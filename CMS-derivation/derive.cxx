@@ -111,7 +111,7 @@ int main(int argc, char *argv[]) {
   const char *file_index_path = argv[1];
   int threads = 0;
   if (argc > 2) {
-    threads = atoi(argv[2]);
+    threads = std::stoi(argv[2]);
   }
 
   SetErrorHandler(ErrorHandler);

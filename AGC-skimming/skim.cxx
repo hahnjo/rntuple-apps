@@ -22,7 +22,6 @@ using ROOT::Experimental::RNTupleWriter;
 using nlohmann::ordered_json;
 
 #include <cstdio>
-#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -311,7 +310,7 @@ int main(int argc, char *argv[]) {
   const char *inputs_path = argv[1];
   int threads = 0;
   if (argc > 2) {
-    threads = atoi(argv[2]);
+    threads = std::stoi(argv[2]);
   }
   // mode = -1: sequential reference version
   // mode = 0: sequential RNTupleWriter (with IMT)
@@ -321,7 +320,7 @@ int main(int argc, char *argv[]) {
   // mode = 4: RNTupleParallelWriter
   int mode = 4;
   if (argc > 3) {
-    mode = atoi(argv[3]);
+    mode = std::stoi(argv[3]);
   }
 
   if (threads >= 0 && mode == 0) {
