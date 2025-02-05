@@ -775,7 +775,9 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
     cgBuilder.ClusterGroupId(0).NClusters(1);
     descriptorBuilder.AddClusterGroup(cgBuilder.MoveDescriptor().Unwrap());
     auto descriptor = descriptorBuilder.MoveDescriptor();
-    RNTupleSerializer::DeserializePageList(msgBuffer, msgSize, 0, descriptor);
+    RNTupleSerializer::DeserializePageList(
+        msgBuffer, msgSize, 0, descriptor,
+        RNTupleSerializer::EDescriptorDeserializeMode::kRaw);
     auto &clusterDescriptor = descriptor.GetClusterDescriptor(0);
 
     unsigned char *ptr = nullptr;
