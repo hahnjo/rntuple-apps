@@ -38,12 +38,12 @@ static constexpr int kTagOffset = 2;
 
 namespace {
 
-using ROOT::Experimental::DescriptorId_t;
-using ROOT::Experimental::NTupleSize_t;
+using ROOT::DescriptorId_t;
+using ROOT::NTupleSize_t;
+using ROOT::RNTupleLocator;
 using ROOT::Experimental::RClusterDescriptor;
 using ROOT::Experimental::RExtraTypeInfoDescriptor;
 using ROOT::Experimental::RNTupleDescriptor;
-using ROOT::Experimental::RNTupleLocator;
 using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleWriteOptions;
 using ROOT::Experimental::Detail::RNTupleAtomicCounter;
