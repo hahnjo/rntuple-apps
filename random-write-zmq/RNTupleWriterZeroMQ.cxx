@@ -96,6 +96,347 @@ using ROOT::Experimental::Internal::RPagePersistentSink;
 using ROOT::Experimental::Internal::RPageSink;
 using ROOT::Experimental::Internal::RPageStorage;
 
+/// A persistent page sink based on RPageSinkFile used by the
+/// RNTupleWriterZeroMQ server.
+class RPageSinkZeroMQServer final : public RPagePersistentSink {
+  /// The file writer to write the ntuple.
+  std::unique_ptr<RNTupleFileWriter> fWriter;
+  /// The last offset in the file that was reserved in CommitSealedPageVImpl.
+  std::uint64_t fLastOffset = 0;
+  /// The current offset in the file.
+  std::uint64_t fCurrentOffset = 0;
+  /// The key buffer when sending to the processes.
+  unsigned char fKeyBuffer[kBlobKeyLen];
+  /// Whether the clients are expected to send the payload data.
+  bool fClientsSendData;
+  /// Whether to send the key to the clients instead of writing.
+  bool fSendKey;
+
+public:
+  RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
+      : RPagePersistentSink(config.fNTupleName, config.fOptions),
+        fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
+    fCompressor = std::make_unique<RNTupleCompressor>();
+    EnableDefaultMetrics("RPageSinkZeroMQ");
+    // No support for merging pages at the moment
+    fFeatures.fCanMergePages = false;
+
+    // Create the file writer, but force the write buffer size to avoid
+    // overlapping writes on server and client.
+    // TODO: This is pessimistic for writing the header and footer...
+    RNTupleWriteOptions options = config.fOptions;
+    if (!fClientsSendData) {
+      options.SetWriteBufferSize(kServerClientWriteAlignment);
+    }
+
+    fWriter = RNTupleFileWriter::Recreate(
+        config.fNTupleName, config.fStorage,
+        RNTupleFileWriter::EContainerFormat::kTFile, options);
+  }
+
+  std::uint64_t GetLastOffset() const { return fLastOffset; }
+  const unsigned char *GetKeyBuffer() const { return &fKeyBuffer[0]; }
+
+  void InitImpl(unsigned char *serializedHeader,
+                std::uint32_t length) override {
+    // Copied from RPageSinkFile::InitImpl
+    std::unique_ptr<unsigned char[]> zipBuffer(new unsigned char[length]);
+    auto szZipHeader = fCompressor->Zip(
+        serializedHeader, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
+    auto offset =
+        fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
+    fCurrentOffset = offset + szZipHeader;
+    if (!fClientsSendData &&
+        fCurrentOffset % kServerClientWriteAlignment != 0) {
+      // Insert a dummy blob to make the offset aligned. For this, we need at
+      // least kBlobKeyLen bytes to write the key.
+      auto dummyOffset = fCurrentOffset + kBlobKeyLen;
+      std::size_t bytes = 0;
+      if (dummyOffset % kServerClientWriteAlignment != 0) {
+        bytes = kServerClientWriteAlignment -
+                dummyOffset % kServerClientWriteAlignment;
+      }
+      offset = fWriter->ReserveBlob(bytes, 0);
+      R__ASSERT(offset == dummyOffset);
+      fCurrentOffset = offset + bytes;
+    }
+    R__ASSERT(fClientsSendData ||
+              fCurrentOffset % kServerClientWriteAlignment == 0);
+  };
+
+  RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
+    throw ROOT::RException(
+        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
+    return {};
+  }
+  RNTupleLocator CommitSealedPageImpl(DescriptorId_t,
+                                      const RSealedPage &) override {
+    throw ROOT::RException(
+        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
+    return {};
+  }
+
+  std::vector<RNTupleLocator>
+  CommitSealedPageVImpl(std::span<RPageStorage::RSealedPageGroup> ranges,
+                        const std::vector<bool> &mask) override {
+    std::uint64_t sumSealedPages = 0, sumBytesPacked = 0;
+
+    std::size_t nPages = 0;
+    for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
+      auto &range = *rangeIt;
+      if (range.fFirst == range.fLast) {
+        // Skip empty ranges, they might not have a physical column ID!
+        continue;
+      }
+
+      const auto bitsOnStorage =
+          fDescriptorBuilder.GetDescriptor()
+              .GetColumnDescriptor(range.fPhysicalColumnId)
+              .GetBitsOnStorage();
+
+      for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
+           ++sealedPageIt) {
+        assert(mask[nPages]);
+        nPages++;
+
+        const auto bytesPacked =
+            (bitsOnStorage * sealedPageIt->GetNElements() + 7) / 8;
+        sumSealedPages += sealedPageIt->GetBufferSize();
+        sumBytesPacked += bytesPacked;
+      }
+    }
+
+    assert(sumSealedPages < fOptions->GetMaxKeySize());
+    assert(sumBytesPacked < fOptions->GetMaxKeySize());
+
+    std::vector<RNTupleLocator> locators;
+    {
+      RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
+                               fCounters->fTimeCpuWrite);
+
+      std::uint64_t padding = 0;
+      if (!fClientsSendData) {
+        // If the clients write the data directly, we need to pad the reserved
+        // buffer accordingly to avoid overlapping writes.
+        R__ASSERT(fCurrentOffset % kServerClientWriteAlignment == 0);
+        if (!fSendKey) {
+          // For the key header, we know that the current offset is aligned and
+          // we need to pad until the next alignment boundary.
+          padding = kServerClientWriteAlignment - kBlobKeyLen;
+          // For the end of the buffer, we again need to pad until the next
+          // alignment boundary.
+          if (sumSealedPages % kServerClientWriteAlignment != 0) {
+            padding += kServerClientWriteAlignment -
+                       sumSealedPages % kServerClientWriteAlignment;
+          }
+        } else {
+          // If the clients also write the key, need to factor this in.
+          auto totalSize = kBlobKeyLen + sumSealedPages;
+          // Then we need to pad until the next alignment boundary.
+          if (totalSize % kServerClientWriteAlignment != 0) {
+            padding += kServerClientWriteAlignment -
+                       totalSize % kServerClientWriteAlignment;
+          }
+        }
+      }
+      unsigned char *keyBuffer = nullptr;
+      if (fSendKey) {
+        keyBuffer = fKeyBuffer;
+      }
+      std::uint64_t offset = fWriter->ReserveBlob(sumSealedPages + padding,
+                                                  sumBytesPacked, keyBuffer);
+      R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
+      fCurrentOffset = offset + sumSealedPages + padding;
+      R__ASSERT(fClientsSendData ||
+                fCurrentOffset % kServerClientWriteAlignment == 0);
+
+      if (!fClientsSendData) {
+        R__ASSERT(offset % kServerClientWriteAlignment == kBlobKeyLen);
+        if (!fSendKey) {
+          offset += kServerClientWriteAlignment - kBlobKeyLen;
+        }
+      }
+      fLastOffset = offset;
+
+      locators.reserve(nPages);
+
+      for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
+        for (auto sealedPageIt = rangeIt->fFirst;
+             sealedPageIt != rangeIt->fLast; ++sealedPageIt) {
+          const auto &sealedPage = *sealedPageIt;
+          if (sealedPage.GetBuffer()) {
+            assert(fClientsSendData);
+            // If the buffer is nullptr, the client did not send the data and
+            // will instead write into this offset.
+            fWriter->WriteIntoReservedBlob(sealedPage.GetBuffer(),
+                                           sealedPage.GetBufferSize(), offset);
+          } else {
+            assert(!fClientsSendData);
+          }
+          RNTupleLocator locator;
+          locator.SetPosition(offset);
+          locator.SetNBytesOnStorage(sealedPage.GetDataSize());
+          locators.push_back(locator);
+          offset += sealedPage.GetBufferSize();
+        }
+      }
+    }
+
+    fCounters->fNPageCommitted.Add(nPages);
+    fCounters->fSzWritePayload.Add(sumSealedPages);
+
+    return locators;
+  }
+
+  std::uint64_t StageClusterImpl() override {
+    // We don't care about the number of bytes written on the server.
+    return 0;
+  }
+  RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList,
+                                        std::uint32_t length) override {
+    // Copied from RPageSinkFile::CommitClusterGroupImpl
+    std::unique_ptr<unsigned char[]> bufPageListZip(new unsigned char[length]);
+    auto szPageListZip = fCompressor->Zip(
+        serializedPageList, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
+
+    RNTupleLocator result;
+    result.SetNBytesOnStorage(szPageListZip);
+    result.SetPosition(
+        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
+    return result;
+  }
+  void CommitDatasetImpl(unsigned char *serializedFooter,
+                         std::uint32_t length) override {
+    // Copied from RPageSinkFile::CommitDatasetImpl
+    fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
+    std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
+    auto szFooterZip = fCompressor->Zip(
+        serializedFooter, length, GetWriteOptions().GetCompression(),
+        RNTupleCompressor::MakeMemCopyWriter(bufFooterZip.get()));
+    fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
+    fWriter->Commit();
+  }
+};
+
+} // namespace
+
+void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
+  int rc;
+  while (clients > 0) {
+    zmq_msg_t msg;
+    ZMQMsgRecv(&msg, fSocket);
+    std::size_t msgSize = zmq_msg_size(&msg);
+
+    if (msgSize == 0) {
+      // The client signaled it is done. Send back an empty message.
+      clients--;
+
+      rc = zmq_msg_close(&msg);
+      if (rc) {
+        throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
+      }
+
+      ZMQSend(fSocket, NULL, 0);
+      continue;
+    }
+
+    // The client wants to commit a cluster.
+    void *msgBuffer = zmq_msg_data(&msg);
+
+    // Create a temporary descriptor to deserialize the client's page list.
+    RNTupleDescriptorBuilder descriptorBuilder;
+    descriptorBuilder.SetNTuple("ntuple", "");
+    RClusterGroupDescriptorBuilder cgBuilder;
+    cgBuilder.ClusterGroupId(0).NClusters(1);
+    descriptorBuilder.AddClusterGroup(cgBuilder.MoveDescriptor().Unwrap());
+    auto descriptor = descriptorBuilder.MoveDescriptor();
+    RNTupleSerializer::DeserializePageList(
+        msgBuffer, msgSize, 0, descriptor,
+        RNTupleSerializer::EDescriptorDeserializeMode::kRaw);
+    auto &clusterDescriptor = descriptor.GetClusterDescriptor(0);
+
+    unsigned char *ptr = nullptr;
+    if (fClientsSendData) {
+      // The first 64 bits of the envelope is the type and the length.
+      std::uint64_t typeAndSize;
+      RNTupleSerializer::DeserializeUInt64(msgBuffer, typeAndSize);
+      std::uint64_t envelopeSize = typeAndSize >> 16;
+
+      ptr = static_cast<unsigned char *>(msgBuffer) + envelopeSize;
+    }
+
+    // Rebuild the list of sealed pages. If the client sent the data, they will
+    // point into the message buffer. Otherwise, the buffer will be the nullptr
+    // and RPageSinkZeroMQServer will not write them.
+    std::deque<RPageStorage::SealedPageSequence_t> sealedPagesV;
+    std::vector<RPageStorage::RSealedPageGroup> sealedPageGroups;
+    auto nColumns = clusterDescriptor.GetColumnRangeIterable().size();
+    DescriptorId_t columnId = 0;
+    while (nColumns > 0) {
+      if (!clusterDescriptor.ContainsColumn(columnId)) {
+        columnId++;
+        continue;
+      }
+
+      nColumns--;
+
+      auto &columnRange = clusterDescriptor.GetColumnRange(columnId);
+      if (columnRange.fIsSuppressed) {
+        // TODO: Mark as suppressed
+        columnId++;
+        continue;
+      }
+
+      auto &pageRange = clusterDescriptor.GetPageRange(columnId);
+      RPageStorage::SealedPageSequence_t sealedPages;
+      for (const auto &pageInfo : pageRange.fPageInfos) {
+        auto bytesOnStorage = pageInfo.fLocator.GetNBytesOnStorage();
+        sealedPages.emplace_back(ptr, bytesOnStorage, pageInfo.fNElements,
+                                 pageInfo.fHasChecksum);
+        if (ptr) {
+          ptr += bytesOnStorage;
+        }
+      }
+
+      sealedPagesV.push_back(std::move(sealedPages));
+      sealedPageGroups.emplace_back(columnId, sealedPagesV.back().cbegin(),
+                                    sealedPagesV.back().cend());
+
+      columnId++;
+    }
+    assert(ptr == nullptr ||
+           ptr == static_cast<unsigned char *>(msgBuffer) + msgSize);
+
+    fSink->CommitSealedPageV(sealedPageGroups);
+    fSink->CommitCluster(clusterDescriptor.GetNEntries());
+
+    rc = zmq_msg_close(&msg);
+    if (rc) {
+      throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
+    }
+
+    // Send the response.
+    std::size_t size = 0;
+    unsigned char buffer[sizeof(std::uint64_t) + kBlobKeyLen];
+    if (!fClientsSendData) {
+      auto *zmqSink = static_cast<RPageSinkZeroMQServer *>(fSink.get());
+      std::uint64_t offset = zmqSink->GetLastOffset();
+      RNTupleSerializer::SerializeUInt64(offset, &buffer[0]);
+      size = sizeof(std::uint64_t);
+      if (fSendKey) {
+        memcpy(&buffer[size], zmqSink->GetKeyBuffer(), kBlobKeyLen);
+        size += kBlobKeyLen;
+      }
+    }
+
+    ZMQSend(fSocket, &buffer[0], size);
+  }
+}
+
+namespace {
+
 /// A page sink that sends all data to the RNTupleWriterZeroMQ server.
 class RPageSinkZeroMQClient final : public RPageSink {
   /// A helper struct to keep information about a column and buffer all sealed
@@ -486,230 +827,6 @@ public:
   }
 };
 
-/// A persistent page sink based on RPageSinkFile used by the
-/// RNTupleWriterZeroMQ server.
-class RPageSinkZeroMQServer final : public RPagePersistentSink {
-  /// The file writer to write the ntuple.
-  std::unique_ptr<RNTupleFileWriter> fWriter;
-  /// The last offset in the file that was reserved in CommitSealedPageVImpl.
-  std::uint64_t fLastOffset = 0;
-  /// The current offset in the file.
-  std::uint64_t fCurrentOffset = 0;
-  /// The key buffer when sending to the processes.
-  unsigned char fKeyBuffer[kBlobKeyLen];
-  /// Whether the clients are expected to send the payload data.
-  bool fClientsSendData;
-  /// Whether to send the key to the clients instead of writing.
-  bool fSendKey;
-
-public:
-  RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
-      : RPagePersistentSink(config.fNTupleName, config.fOptions),
-        fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
-    fCompressor = std::make_unique<RNTupleCompressor>();
-    EnableDefaultMetrics("RPageSinkZeroMQ");
-    // No support for merging pages at the moment
-    fFeatures.fCanMergePages = false;
-
-    // Create the file writer, but force the write buffer size to avoid
-    // overlapping writes on server and client.
-    // TODO: This is pessimistic for writing the header and footer...
-    RNTupleWriteOptions options = config.fOptions;
-    if (!fClientsSendData) {
-      options.SetWriteBufferSize(kServerClientWriteAlignment);
-    }
-
-    fWriter = RNTupleFileWriter::Recreate(
-        config.fNTupleName, config.fStorage,
-        RNTupleFileWriter::EContainerFormat::kTFile, options);
-  }
-
-  std::uint64_t GetLastOffset() const { return fLastOffset; }
-  const unsigned char *GetKeyBuffer() const { return &fKeyBuffer[0]; }
-
-  void InitImpl(unsigned char *serializedHeader,
-                std::uint32_t length) override {
-    // Copied from RPageSinkFile::InitImpl
-    std::unique_ptr<unsigned char[]> zipBuffer(new unsigned char[length]);
-    auto szZipHeader = fCompressor->Zip(
-        serializedHeader, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
-    auto offset =
-        fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
-    fCurrentOffset = offset + szZipHeader;
-    if (!fClientsSendData &&
-        fCurrentOffset % kServerClientWriteAlignment != 0) {
-      // Insert a dummy blob to make the offset aligned. For this, we need at
-      // least kBlobKeyLen bytes to write the key.
-      auto dummyOffset = fCurrentOffset + kBlobKeyLen;
-      std::size_t bytes = 0;
-      if (dummyOffset % kServerClientWriteAlignment != 0) {
-        bytes = kServerClientWriteAlignment -
-                dummyOffset % kServerClientWriteAlignment;
-      }
-      offset = fWriter->ReserveBlob(bytes, 0);
-      R__ASSERT(offset == dummyOffset);
-      fCurrentOffset = offset + bytes;
-    }
-    R__ASSERT(fClientsSendData ||
-              fCurrentOffset % kServerClientWriteAlignment == 0);
-  };
-
-  RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
-    throw ROOT::RException(
-        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
-    return {};
-  }
-  RNTupleLocator CommitSealedPageImpl(DescriptorId_t,
-                                      const RSealedPage &) override {
-    throw ROOT::RException(
-        R__FAIL("should never commit a single page via RPageSinkZeroMQServer"));
-    return {};
-  }
-
-  std::vector<RNTupleLocator>
-  CommitSealedPageVImpl(std::span<RPageStorage::RSealedPageGroup> ranges,
-                        const std::vector<bool> &mask) override {
-    std::uint64_t sumSealedPages = 0, sumBytesPacked = 0;
-
-    std::size_t nPages = 0;
-    for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
-      auto &range = *rangeIt;
-      if (range.fFirst == range.fLast) {
-        // Skip empty ranges, they might not have a physical column ID!
-        continue;
-      }
-
-      const auto bitsOnStorage =
-          fDescriptorBuilder.GetDescriptor()
-              .GetColumnDescriptor(range.fPhysicalColumnId)
-              .GetBitsOnStorage();
-
-      for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
-           ++sealedPageIt) {
-        assert(mask[nPages]);
-        nPages++;
-
-        const auto bytesPacked =
-            (bitsOnStorage * sealedPageIt->GetNElements() + 7) / 8;
-        sumSealedPages += sealedPageIt->GetBufferSize();
-        sumBytesPacked += bytesPacked;
-      }
-    }
-
-    assert(sumSealedPages < fOptions->GetMaxKeySize());
-    assert(sumBytesPacked < fOptions->GetMaxKeySize());
-
-    std::vector<RNTupleLocator> locators;
-    {
-      RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
-                               fCounters->fTimeCpuWrite);
-
-      std::uint64_t padding = 0;
-      if (!fClientsSendData) {
-        // If the clients write the data directly, we need to pad the reserved
-        // buffer accordingly to avoid overlapping writes.
-        R__ASSERT(fCurrentOffset % kServerClientWriteAlignment == 0);
-        if (!fSendKey) {
-          // For the key header, we know that the current offset is aligned and
-          // we need to pad until the next alignment boundary.
-          padding = kServerClientWriteAlignment - kBlobKeyLen;
-          // For the end of the buffer, we again need to pad until the next
-          // alignment boundary.
-          if (sumSealedPages % kServerClientWriteAlignment != 0) {
-            padding += kServerClientWriteAlignment -
-                       sumSealedPages % kServerClientWriteAlignment;
-          }
-        } else {
-          // If the clients also write the key, need to factor this in.
-          auto totalSize = kBlobKeyLen + sumSealedPages;
-          // Then we need to pad until the next alignment boundary.
-          if (totalSize % kServerClientWriteAlignment != 0) {
-            padding += kServerClientWriteAlignment -
-                       totalSize % kServerClientWriteAlignment;
-          }
-        }
-      }
-      unsigned char *keyBuffer = nullptr;
-      if (fSendKey) {
-        keyBuffer = fKeyBuffer;
-      }
-      std::uint64_t offset = fWriter->ReserveBlob(sumSealedPages + padding,
-                                                  sumBytesPacked, keyBuffer);
-      R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
-      fCurrentOffset = offset + sumSealedPages + padding;
-      R__ASSERT(fClientsSendData ||
-                fCurrentOffset % kServerClientWriteAlignment == 0);
-
-      if (!fClientsSendData) {
-        R__ASSERT(offset % kServerClientWriteAlignment == kBlobKeyLen);
-        if (!fSendKey) {
-          offset += kServerClientWriteAlignment - kBlobKeyLen;
-        }
-      }
-      fLastOffset = offset;
-
-      locators.reserve(nPages);
-
-      for (auto rangeIt = ranges.begin(); rangeIt != ranges.end(); ++rangeIt) {
-        for (auto sealedPageIt = rangeIt->fFirst;
-             sealedPageIt != rangeIt->fLast; ++sealedPageIt) {
-          const auto &sealedPage = *sealedPageIt;
-          if (sealedPage.GetBuffer()) {
-            assert(fClientsSendData);
-            // If the buffer is nullptr, the client did not send the data and
-            // will instead write into this offset.
-            fWriter->WriteIntoReservedBlob(sealedPage.GetBuffer(),
-                                           sealedPage.GetBufferSize(), offset);
-          } else {
-            assert(!fClientsSendData);
-          }
-          RNTupleLocator locator;
-          locator.SetPosition(offset);
-          locator.SetNBytesOnStorage(sealedPage.GetDataSize());
-          locators.push_back(locator);
-          offset += sealedPage.GetBufferSize();
-        }
-      }
-    }
-
-    fCounters->fNPageCommitted.Add(nPages);
-    fCounters->fSzWritePayload.Add(sumSealedPages);
-
-    return locators;
-  }
-
-  std::uint64_t StageClusterImpl() override {
-    // We don't care about the number of bytes written on the server.
-    return 0;
-  }
-  RNTupleLocator CommitClusterGroupImpl(unsigned char *serializedPageList,
-                                        std::uint32_t length) override {
-    // Copied from RPageSinkFile::CommitClusterGroupImpl
-    std::unique_ptr<unsigned char[]> bufPageListZip(new unsigned char[length]);
-    auto szPageListZip = fCompressor->Zip(
-        serializedPageList, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
-
-    RNTupleLocator result;
-    result.SetNBytesOnStorage(szPageListZip);
-    result.SetPosition(
-        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
-    return result;
-  }
-  void CommitDatasetImpl(unsigned char *serializedFooter,
-                         std::uint32_t length) override {
-    // Copied from RPageSinkFile::CommitDatasetImpl
-    fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
-    std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
-    auto szFooterZip = fCompressor->Zip(
-        serializedFooter, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(bufFooterZip.get()));
-    fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
-    fWriter->Commit();
-  }
-};
-
 } // namespace
 
 RNTupleWriterZeroMQ::RNTupleWriterZeroMQ(Config config)
@@ -743,119 +860,6 @@ RNTupleWriterZeroMQ::~RNTupleWriterZeroMQ() {
 
   zmq_close(fSocket);
   zmq_ctx_destroy(fContext);
-}
-
-void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
-  int rc;
-  while (clients > 0) {
-    zmq_msg_t msg;
-    ZMQMsgRecv(&msg, fSocket);
-    std::size_t msgSize = zmq_msg_size(&msg);
-
-    if (msgSize == 0) {
-      // The client signaled it is done. Send back an empty message.
-      clients--;
-
-      rc = zmq_msg_close(&msg);
-      if (rc) {
-        throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
-      }
-
-      ZMQSend(fSocket, NULL, 0);
-      continue;
-    }
-
-    // The client wants to commit a cluster.
-    void *msgBuffer = zmq_msg_data(&msg);
-
-    // Create a temporary descriptor to deserialize the client's page list.
-    RNTupleDescriptorBuilder descriptorBuilder;
-    descriptorBuilder.SetNTuple("ntuple", "");
-    RClusterGroupDescriptorBuilder cgBuilder;
-    cgBuilder.ClusterGroupId(0).NClusters(1);
-    descriptorBuilder.AddClusterGroup(cgBuilder.MoveDescriptor().Unwrap());
-    auto descriptor = descriptorBuilder.MoveDescriptor();
-    RNTupleSerializer::DeserializePageList(
-        msgBuffer, msgSize, 0, descriptor,
-        RNTupleSerializer::EDescriptorDeserializeMode::kRaw);
-    auto &clusterDescriptor = descriptor.GetClusterDescriptor(0);
-
-    unsigned char *ptr = nullptr;
-    if (fClientsSendData) {
-      // The first 64 bits of the envelope is the type and the length.
-      std::uint64_t typeAndSize;
-      RNTupleSerializer::DeserializeUInt64(msgBuffer, typeAndSize);
-      std::uint64_t envelopeSize = typeAndSize >> 16;
-
-      ptr = static_cast<unsigned char *>(msgBuffer) + envelopeSize;
-    }
-
-    // Rebuild the list of sealed pages. If the client sent the data, they will
-    // point into the message buffer. Otherwise, the buffer will be the nullptr
-    // and RPageSinkZeroMQServer will not write them.
-    std::deque<RPageStorage::SealedPageSequence_t> sealedPagesV;
-    std::vector<RPageStorage::RSealedPageGroup> sealedPageGroups;
-    auto nColumns = clusterDescriptor.GetColumnRangeIterable().size();
-    DescriptorId_t columnId = 0;
-    while (nColumns > 0) {
-      if (!clusterDescriptor.ContainsColumn(columnId)) {
-        columnId++;
-        continue;
-      }
-
-      nColumns--;
-
-      auto &columnRange = clusterDescriptor.GetColumnRange(columnId);
-      if (columnRange.fIsSuppressed) {
-        // TODO: Mark as suppressed
-        columnId++;
-        continue;
-      }
-
-      auto &pageRange = clusterDescriptor.GetPageRange(columnId);
-      RPageStorage::SealedPageSequence_t sealedPages;
-      for (const auto &pageInfo : pageRange.fPageInfos) {
-        auto bytesOnStorage = pageInfo.fLocator.GetNBytesOnStorage();
-        sealedPages.emplace_back(ptr, bytesOnStorage, pageInfo.fNElements,
-                                 pageInfo.fHasChecksum);
-        if (ptr) {
-          ptr += bytesOnStorage;
-        }
-      }
-
-      sealedPagesV.push_back(std::move(sealedPages));
-      sealedPageGroups.emplace_back(columnId, sealedPagesV.back().cbegin(),
-                                    sealedPagesV.back().cend());
-
-      columnId++;
-    }
-    assert(ptr == nullptr ||
-           ptr == static_cast<unsigned char *>(msgBuffer) + msgSize);
-
-    fSink->CommitSealedPageV(sealedPageGroups);
-    fSink->CommitCluster(clusterDescriptor.GetNEntries());
-
-    rc = zmq_msg_close(&msg);
-    if (rc) {
-      throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
-    }
-
-    // Send the response.
-    std::size_t size = 0;
-    unsigned char buffer[sizeof(std::uint64_t) + kBlobKeyLen];
-    if (!fClientsSendData) {
-      auto *zmqSink = static_cast<RPageSinkZeroMQServer *>(fSink.get());
-      std::uint64_t offset = zmqSink->GetLastOffset();
-      RNTupleSerializer::SerializeUInt64(offset, &buffer[0]);
-      size = sizeof(std::uint64_t);
-      if (fSendKey) {
-        memcpy(&buffer[size], zmqSink->GetKeyBuffer(), kBlobKeyLen);
-        size += kBlobKeyLen;
-      }
-    }
-
-    ZMQSend(fSocket, &buffer[0], size);
-  }
 }
 
 std::unique_ptr<RNTupleWriterZeroMQ>
