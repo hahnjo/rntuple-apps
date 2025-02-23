@@ -430,11 +430,13 @@ public:
         auto &pageRange = clusterDescriptor.GetPageRange(columnId);
         RPageStorage::SealedPageSequence_t sealedPages;
         for (const auto &pageInfo : pageRange.fPageInfos) {
-          auto bytesOnStorage = pageInfo.fLocator.GetNBytesOnStorage();
-          sealedPages.emplace_back(ptr, bytesOnStorage, pageInfo.fNElements,
+          const auto bufferSize =
+              pageInfo.fLocator.GetNBytesOnStorage() +
+              pageInfo.fHasChecksum * RPageStorage::kNBytesPageChecksum;
+          sealedPages.emplace_back(ptr, bufferSize, pageInfo.fNElements,
                                    pageInfo.fHasChecksum);
           if (ptr) {
-            ptr += bytesOnStorage;
+            ptr += bufferSize;
           }
         }
 
@@ -727,11 +729,11 @@ public:
           RClusterDescriptor::RPageRange::RPageInfo pageInfo;
           pageInfo.fNElements = pageBuf.fSealedPage.GetNElements();
           // For the locator, we only set the (compressed) size.
-          auto sealedBufferSize = pageBuf.fSealedPage.GetBufferSize();
-          pageInfo.fLocator.SetNBytesOnStorage(sealedBufferSize);
+          pageInfo.fLocator.SetNBytesOnStorage(
+              pageBuf.fSealedPage.GetDataSize());
           pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
           nPages++;
-          sumSealedPages += sealedBufferSize;
+          sumSealedPages += pageBuf.fSealedPage.GetBufferSize();
           pageRange.fPageInfos.emplace_back(pageInfo);
         }
         pageRange.fPhysicalColumnId = i;
