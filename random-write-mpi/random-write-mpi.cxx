@@ -190,8 +190,8 @@ int main(int argc, char *argv[]) {
          rank, rankDuration.count(), wallZip, wallCS, wallCommAggregator,
          wallCommAggregator / rankDuration.count(), &writing[0]);
 
-  // Synchronize the ranks to make sure all data is written.
-  MPI_Barrier(MPI_COMM_WORLD);
+  // Commit the dataset to make sure all data is written.
+  writer->CommitDataset();
 
   double wallAggregatorWrite;
   std::uint64_t bytes;
@@ -208,8 +208,11 @@ int main(int argc, char *argv[]) {
                 ->GetValueAsInt();
   }
 
-  // Destruct the writer and commit the dataset.
+  // Destruct the writer.
   writer.reset();
+
+  // Synchronize all ranks before stopping the timer.
+  MPI_Barrier(MPI_COMM_WORLD);
 
   if (rank == kRoot) {
     // Sync to permanent storage.
