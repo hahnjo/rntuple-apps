@@ -331,11 +331,7 @@ public:
     fSink->Init(*fModel);
   }
 
-  ~RNTupleWriterMPIAggregator() {
-    // Commit the ntuple to storage.
-    fSink->CommitClusterGroup();
-    fSink->CommitDataset();
-  }
+  ~RNTupleWriterMPIAggregator() { CommitDataset(); }
 
   RNTupleMetrics &GetMetrics() { return fSink->GetMetrics(); }
 
@@ -470,6 +466,15 @@ public:
       }
     }
   }
+
+  void CommitDataset() {
+    if (fModel->IsExpired())
+      return;
+
+    fSink->CommitClusterGroup();
+    fSink->CommitDataset();
+    fModel->Expire();
+  }
 };
 
 /// A page sink that writes RNTuple data collectively from multiple processes
@@ -582,11 +587,6 @@ public:
     if (fBlock) {
       std::align_val_t blockAlign{kAggregatorWriteAlignment};
       ::operator delete[](fBlock, blockAlign);
-    }
-
-    if (fAggregator) {
-      fAggregatorThread.join();
-      fAggregator.reset();
     }
 
     MPI_Comm_free(&fComm);
@@ -917,6 +917,13 @@ public:
     if (fFileDes > 0) {
       close(fFileDes);
       fFileDes = -1;
+    }
+    // On the root, wait for the aggregator and write the metadata.
+    if (fAggregator) {
+      fAggregatorThread.join();
+      fAggregator->CommitDataset();
+      // fAggregator must not be destructed because its metrics can still be
+      // queried by the user.
     }
   }
 };
