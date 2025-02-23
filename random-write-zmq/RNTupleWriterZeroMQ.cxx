@@ -508,9 +508,8 @@ public:
   }
 
   ~RPageSinkZeroMQClient() final {
-    if (fFileDes > 0) {
-      close(fFileDes);
-    }
+    assert(fFileDes < 0 && "CommitDataset() should be called");
+
     if (fBlock) {
       std::align_val_t blockAlign{kServerClientWriteAlignment};
       ::operator delete[](fBlock, blockAlign);
@@ -825,6 +824,12 @@ public:
     int rc = zmq_msg_close(&msg);
     if (rc) {
       throw ROOT::RException(R__FAIL("zmq_msg_close() failed"));
+    }
+
+    // Close the file used for parallel writing.
+    if (fFileDes > 0) {
+      close(fFileDes);
+      fFileDes = -1;
     }
   }
 };

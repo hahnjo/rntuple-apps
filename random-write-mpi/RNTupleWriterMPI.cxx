@@ -577,9 +577,8 @@ public:
   }
 
   ~RPageSinkMPI() final {
-    if (fFileDes > 0) {
-      close(fFileDes);
-    }
+    assert(fFileDes < 0 && "CommitDataset() should be called");
+
     if (fBlock) {
       std::align_val_t blockAlign{kAggregatorWriteAlignment};
       ::operator delete[](fBlock, blockAlign);
@@ -913,6 +912,12 @@ public:
   }
   void CommitDatasetImpl() final {
     MPI_Send(NULL, 0, MPI_BYTE, fRoot, kTagAggregator, fComm);
+
+    // Close the file used for parallel writing.
+    if (fFileDes > 0) {
+      close(fFileDes);
+      fFileDes = -1;
+    }
   }
 };
 
