@@ -55,11 +55,15 @@ int main(int argc, char *argv[]) {
   }
 
   long entries = std::stol(argv[1]);
-  // mode = 0: sending all data to the writer
-  // mode = 1: sending only metadata, payload written by individual processes
-  // mode = 2: sending only metadata, paylad *and preceeding key* written by
-  //           individual processes
-  // modes larger than 16 employ the same implementation, but enable Direct I/O
+  // mode & 8 = 0: aggregator thread on root rank
+  //   mode & 4 = 1: reduce contention on root rank with condition_variable
+  //   mode & 3 = 0: sending all data to the aggregator
+  //   mode & 3 = 1: sending only metadata, payload written by individual
+  //                 processes
+  //   mode & 3 = 2: sending only metadata, paylad *and preceeding key* written
+  //                  by individual processes
+  //
+  // mode & 16 = 1: same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 2) {
     mode = std::stoi(argv[2]);
