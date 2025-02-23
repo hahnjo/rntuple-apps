@@ -63,7 +63,8 @@ int main(int argc, char *argv[]) {
   }
   options.SetMaxUnzippedPageSize(128 * 1024);
 
-  printf("Direct I/O: %d\n\n", options.GetUseDirectIO());
+  printf("Direct I/O: %d, compression: %u\n\n", options.GetUseDirectIO(),
+         options.GetCompression());
 
   std::mt19937 generator;
   std::poisson_distribution<int> poisson(5);

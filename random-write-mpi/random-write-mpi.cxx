@@ -93,10 +93,10 @@ int main(int argc, char *argv[]) {
   config.fReduceRootContention = !!(mode & 4);
 
   if (rank == kRoot) {
-    printf("sendData: %d, sendKey: %d, reduceRootContention: %d, Direct I/O: %d"
-           "\n\n",
-           config.fSendData, config.fSendKey, config.fReduceRootContention,
-           config.fOptions.GetUseDirectIO());
+    printf("sendData: %d, sendKey: %d, reduceRootContention: %d\n",
+           config.fSendData, config.fSendKey, config.fReduceRootContention);
+    printf("Direct I/O: %d, compression: %u\n\n",
+           config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression());
   }
 
   // Prepare the data.

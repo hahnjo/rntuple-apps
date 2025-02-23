@@ -75,8 +75,9 @@ int main(int argc, char *argv[]) {
   config.fSendData = (mode & 3) == 0;
   config.fSendKey = (mode & 3) == 2;
 
-  printf("sendData: %d, sendKey: %d, Direct I/O: %d\n\n", config.fSendData,
-         config.fSendKey, config.fOptions.GetUseDirectIO());
+  printf("sendData: %d, sendKey: %d\n", config.fSendData, config.fSendKey);
+  printf("Direct I/O: %d, compression: %u\n\n",
+         config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression());
   fflush(stdout);
 
   // Prepare the data, before forking.
