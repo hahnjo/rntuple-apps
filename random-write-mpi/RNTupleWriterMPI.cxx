@@ -719,12 +719,13 @@ public:
         R__FAIL("staged cluster committing not supported via RPageSinkMPI"));
   }
 
-  std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
+  /// Build a RClusterDescriptor based on the buffered columns and pages and
+  /// return its clusterId.
+  DescriptorId_t BuildCluster(NTupleSize_t nNewEntries) {
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
-
-    // Build a RClusterDescriptor based on the buffered columns and pages.
-    RClusterDescriptorBuilder clusterBuilder;
     DescriptorId_t clusterId = descriptor.GetNActiveClusters();
+
+    RClusterDescriptorBuilder clusterBuilder;
     // First entry index are left unset.
     clusterBuilder.ClusterId(clusterId).NEntries(nNewEntries);
     for (unsigned int i = 0; i < fBufferedColumns.size(); ++i) {
@@ -755,6 +756,13 @@ public:
       }
     }
     fDescriptorBuilder.AddCluster(clusterBuilder.MoveDescriptor().Unwrap());
+
+    return clusterId;
+  }
+
+  std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
+    const auto &descriptor = fDescriptorBuilder.GetDescriptor();
+    DescriptorId_t clusterId = BuildCluster(nNewEntries);
 
     // Serialize the RClusterDescriptor and send via the socket.
     DescriptorId_t physClusterIDs[] = {
