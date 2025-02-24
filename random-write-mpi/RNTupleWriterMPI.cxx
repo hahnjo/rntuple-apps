@@ -682,6 +682,11 @@ public:
   CommitSealedPageV(std::span<RPageStorage::RSealedPageGroup> ranges) final {
     assert(fOptions->GetUseBufferedWrite());
     for (auto &range : ranges) {
+      if (range.fFirst == range.fLast) {
+        // Skip empty ranges, they might not have a physical column ID!
+        continue;
+      }
+
       auto &columnBuf = fBufferedColumns.at(range.fPhysicalColumnId);
       for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
            ++sealedPageIt) {
