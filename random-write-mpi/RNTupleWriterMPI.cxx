@@ -596,6 +596,25 @@ public:
     MPI_Comm_free(&fComm);
   }
 
+  void OpenFile() {
+    if (fFileDes >= 0) {
+      return;
+    }
+
+    int flags = O_WRONLY;
+#ifdef O_LARGEFILE
+    // Add the equivalent flag that is passed by fopen64.
+    flags |= O_LARGEFILE;
+#endif
+    if (fOptions->GetUseDirectIO()) {
+      flags |= O_DIRECT;
+    }
+    fFileDes = open(fStorage.c_str(), flags, 0666);
+    if (fFileDes < 0) {
+      throw ROOT::RException(R__FAIL("open() failed"));
+    }
+  }
+
   const RNTupleDescriptor &GetDescriptor() const final {
     static RNTupleDescriptor descriptor;
     return descriptor;
@@ -825,20 +844,7 @@ public:
     if (!fSendData) {
       // After the aggregator replied, we are guaranteed that it created the
       // file and we can open it for parallel writing.
-      if (fFileDes < 0) {
-        int flags = O_WRONLY;
-#ifdef O_LARGEFILE
-        // Add the equivalent flag that is passed by fopen64.
-        flags |= O_LARGEFILE;
-#endif
-        if (fOptions->GetUseDirectIO()) {
-          flags |= O_DIRECT;
-        }
-        fFileDes = open(fStorage.c_str(), flags, 0666);
-        if (fFileDes < 0) {
-          throw ROOT::RException(R__FAIL("open() failed"));
-        }
-      }
+      OpenFile();
 
 #ifndef NDEBUG
       int count;
