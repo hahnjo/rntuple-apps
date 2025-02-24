@@ -62,6 +62,9 @@ int main(int argc, char *argv[]) {
   //   mode & 3 = 2: sending only metadata, paylad *and preceeding key* written
   //                  by individual processes
   //
+  // mode & 8 = 1: aggregator-less writing using global offset
+  //   mode & 3 = 0: one-sided communication
+  //
   // mode & 16 = 1: same implementation, but enable Direct I/O
   int mode = 1;
   if (argc > 2) {
@@ -86,14 +89,26 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
-  bool sendData = (mode & 3) == 0;
-  config.fSendData = sendData;
-  config.fSendKey = (mode & 3) == 2;
-  config.fReduceRootContention = !!(mode & 4);
+  bool sendData = false;
+  if ((mode & 8) == 0) {
+    sendData = (mode & 3) == 0;
+    config.fSendData = sendData;
+    config.fSendKey = (mode & 3) == 2;
+    config.fReduceRootContention = !!(mode & 4);
+
+    if (rank == kRoot) {
+      printf("sendData: %d, sendKey: %d, reduceRootContention: %d\n",
+             config.fSendData, config.fSendKey, config.fReduceRootContention);
+    }
+  } else {
+    config.fSendData = false;
+    config.fUseGlobalOffset = true;
+    if (rank == kRoot) {
+      printf("globalOffset: %d\n", config.fUseGlobalOffset);
+    }
+  }
 
   if (rank == kRoot) {
-    printf("sendData: %d, sendKey: %d, reduceRootContention: %d\n",
-           config.fSendData, config.fSendKey, config.fReduceRootContention);
     printf("Direct I/O: %d, compression: %u\n\n",
            config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression());
   }

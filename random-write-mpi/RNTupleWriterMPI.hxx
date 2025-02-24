@@ -39,7 +39,9 @@ public:
     /// previous option fSendData.
     bool fSendKey = false;
     /// Whether to reduce contention in the MPI library on the root.
-    bool fReduceRootContention = true;
+    bool fReduceRootContention = false;
+    /// Whether to write without aggregator, using a global offset.
+    bool fUseGlobalOffset = false;
   };
 
 private:

@@ -107,7 +107,47 @@ public:
   }
 
   std::uint64_t GetLastOffset() const { return fLastOffset; }
+  std::uint64_t GetCurrentOffset() const { return fCurrentOffset; }
   const unsigned char *GetKeyBuffer() const { return &fKeyBuffer[0]; }
+
+  void Seek(std::uint64_t offset) {
+    fCurrentOffset = offset;
+    fWriter->Seek(offset);
+  }
+
+  /// Append already written cluster, copying the column and page ranges.
+  void AppendCluster(const RClusterDescriptor &clusterDescriptor) {
+    RStagedCluster stagedClusters[1];
+    RStagedCluster &stagedCluster = stagedClusters[0];
+    stagedCluster.fNEntries = clusterDescriptor.GetNEntries();
+
+    std::size_t nPages = 0;
+    std::uint64_t nBytesWritten = 0;
+    for (const auto &columnRange : clusterDescriptor.GetColumnRangeIterable()) {
+      const auto &pageRange =
+          clusterDescriptor.GetPageRange(columnRange.fPhysicalColumnId);
+      nPages += pageRange.fPageInfos.size();
+      for (const auto &pageInfo : pageRange.fPageInfos) {
+        nBytesWritten += pageInfo.fLocator.GetNBytesOnStorage();
+      }
+
+      // Just copy all members into a column info.
+      RStagedCluster::RColumnInfo columnInfo;
+      columnInfo.fPageRange = pageRange.Clone();
+      columnInfo.fNElements = columnRange.fNElements;
+      columnInfo.fCompressionSettings =
+          columnRange.fCompressionSettings.value();
+      columnInfo.fIsSuppressed = columnRange.fIsSuppressed;
+      stagedCluster.fColumnInfos.push_back(std::move(columnInfo));
+    }
+
+    stagedCluster.fNBytesWritten = nBytesWritten;
+
+    CommitStagedClusters(stagedClusters);
+
+    fCounters->fNPageCommitted.Add(nPages);
+    fCounters->fSzWritePayload.Add(nBytesWritten);
+  }
 
   void InitImpl(unsigned char *serializedHeader,
                 std::uint32_t length) override {
@@ -333,6 +373,13 @@ public:
   ~RNTupleWriterMPIAggregator() { CommitDataset(); }
 
   RNTupleMetrics &GetMetrics() { return fSink->GetMetrics(); }
+  std::uint64_t GetCurrentOffset() const { return fSink->GetCurrentOffset(); }
+
+  void Seek(std::uint64_t offset) { fSink->Seek(offset); }
+
+  void AppendCluster(const RClusterDescriptor &clusterDescriptor) {
+    fSink->AppendCluster(clusterDescriptor);
+  }
 
   void WaitForSignal() {
     assert(fReduceRootContention);
@@ -499,6 +546,8 @@ class RPageSinkMPI final : public RPageSink {
   std::uint64_t fNPages = 0;
   /// The sum of all sealed pages.
   std::uint64_t fSumSealedPages = 0;
+  /// The sum of packed bytes in all pages.
+  std::uint64_t fSumBytesPacked = 0;
 
   /// A dummy serialization context to send information about a cluster to the
   /// aggregator; see CommitCluster.
@@ -511,6 +560,14 @@ class RPageSinkMPI final : public RPageSink {
   MPI_Comm fComm;
   /// The root process rank running the aggregator.
   int fRoot;
+  /// The current rank in the communicator.
+  int fRank;
+  /// The size of the MPI communicator.
+  int fSize;
+  /// The global offset window.
+  MPI_Win fOffsetWindow = MPI_WIN_NULL;
+  /// The pointer to the global offset.
+  std::uint64_t *fOffsetPtr = nullptr;
 
   /// The background thread to run the aggregator on the root.
   std::thread fAggregatorThread;
@@ -539,13 +596,16 @@ class RPageSinkMPI final : public RPageSink {
   bool fAggregatorSendsKey;
   /// Whether to reduce contention in the MPI library on the root.
   bool fReduceRootContention;
+  /// Whether to write without aggregator, using a global offset.
+  bool fUseGlobalOffset = false;
 
 public:
   RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
         fStorage(config.fStorage), fSendData(config.fSendData),
         fAggregatorSendsKey(config.fSendKey),
-        fReduceRootContention(config.fReduceRootContention) {
+        fReduceRootContention(config.fReduceRootContention),
+        fUseGlobalOffset(config.fUseGlobalOffset) {
     fMetrics = RNTupleMetrics("RPageSinkMPI");
     fCounters = std::make_unique<RCounters>(RCounters{
         *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
@@ -572,16 +632,58 @@ public:
       memset(fBlock, 0, kProcessWriteBufferSize);
     }
 
-    int rank, size;
-    MPI_Comm_rank(fComm, &rank);
-    MPI_Comm_size(fComm, &size);
+    MPI_Comm_rank(fComm, &fRank);
+    MPI_Comm_size(fComm, &fSize);
 
-    if (rank == root) {
+    if (fRank == root) {
       fAggregator =
           std::make_unique<RNTupleWriterMPIAggregator>(config, root, fComm);
       fMetrics.ObserveMetrics(fAggregator->GetMetrics());
-      fAggregatorThread =
-          std::thread([this, size]() { fAggregator->Collect(size); });
+      if (!fUseGlobalOffset) {
+        fAggregatorThread =
+            std::thread([this]() { fAggregator->Collect(fSize); });
+      }
+    }
+
+    if (fUseGlobalOffset) {
+      MPI_Aint winSize = 0;
+      if (fRank == fRoot) {
+        winSize = sizeof(std::uint64_t);
+      }
+
+      // Configure the window that we need.
+      MPI_Info winInfo;
+      MPI_Info_create(&winInfo);
+      // We want to use passive target communication between MPI_Win_lock and
+      // MPI_Win_unlock.
+      MPI_Info_set(winInfo, "no_locks", "false");
+      // It's not clear if the following settings have an effect since we use
+      // MPI_Fetch_and_op and not MPI_Get_accumulate. In any case, we don't need
+      // ordering guarantees since the counter is a single std::uint64_t.
+      MPI_Info_set(winInfo, "accumulate_ordering", "none");
+      // We don't use MPI_NO_OP.
+      MPI_Info_set(winInfo, "accumulate_ops", "same_op");
+      // The counter is a single std::uint64_t.
+      MPI_Info_set(winInfo, "mpi_accumulate_granularity", "8");
+      // The argument disp_unit = 1 is identical on all MPI processes.
+      MPI_Info_set(winInfo, "same_disp_unit", "true");
+
+      // Set up the window.
+      MPI_Win_allocate(winSize, /*disp_unit=*/1, winInfo, fComm, &fOffsetPtr,
+                       &fOffsetWindow);
+      // Free the info object, not needed anymore.
+      MPI_Info_free(&winInfo);
+
+      if (fRank == fRoot) {
+        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+        *fOffsetPtr = fAggregator->GetCurrentOffset();
+        MPI_Win_unlock(fRoot, fOffsetWindow);
+      }
+      MPI_Barrier(fComm);
+
+      // After the barrier, we are guaranteed that the root created the file and
+      // we can open it for parallel writing.
+      OpenFile();
     }
   }
 
@@ -613,6 +715,16 @@ public:
     if (fFileDes < 0) {
       throw ROOT::RException(R__FAIL("open() failed"));
     }
+  }
+
+  std::uint64_t GetAndIncrementOffset(std::uint64_t size) {
+    assert(fUseGlobalOffset && fOffsetWindow != MPI_WIN_NULL);
+    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+    std::uint64_t offset;
+    MPI_Fetch_and_op(&size, &offset, MPI_UINT64_T, fRoot, 0, MPI_SUM,
+                     fOffsetWindow);
+    MPI_Win_unlock(fRoot, fOffsetWindow);
+    return offset;
   }
 
   const RNTupleDescriptor &GetDescriptor() const final {
@@ -678,14 +790,22 @@ public:
   void CommitSuppressedColumn(ColumnHandle_t columnHandle) final {
     fBufferedColumns.at(columnHandle.fPhysicalId).fIsSuppressed = true;
   }
-  void CountSealedPage(const RPageStorage::RSealedPage &sealedPage) {
+  void CountSealedPage(const RPageStorage::RSealedPage &sealedPage,
+                       DescriptorId_t columnId) {
     fNPages++;
     fSumSealedPages += sealedPage.GetBufferSize();
+
+    const auto bitsOnStorage = fDescriptorBuilder.GetDescriptor()
+                                   .GetColumnDescriptor(columnId)
+                                   .GetBitsOnStorage();
+    const auto bytesPacked =
+        (bitsOnStorage * sealedPage.GetNElements() + 7) / 8;
+    fSumBytesPacked += bytesPacked;
   }
   void CommitPage(ColumnHandle_t columnHandle, const RPage &page) final {
     assert(!fOptions->GetUseBufferedWrite());
-    auto &pageBuf =
-        fBufferedColumns.at(columnHandle.fPhysicalId).fPages.emplace_back();
+    const auto columnId = columnHandle.fPhysicalId;
+    auto &pageBuf = fBufferedColumns.at(columnId).fPages.emplace_back();
     auto bufferSize =
         page.GetNBytes() +
         GetWriteOptions().GetEnablePageChecksums() * kNBytesPageChecksum;
@@ -700,7 +820,7 @@ public:
     config.fAllowAlias = false;
     config.fBuffer = pageBuf.fBuffer.get();
     pageBuf.fSealedPage = SealPage(config);
-    CountSealedPage(pageBuf.fSealedPage);
+    CountSealedPage(pageBuf.fSealedPage, columnId);
   }
   void CommitSealedPage(DescriptorId_t, const RSealedPage &) final {
     throw ROOT::RException(
@@ -715,16 +835,18 @@ public:
         continue;
       }
 
-      auto &columnBuf = fBufferedColumns.at(range.fPhysicalColumnId);
+      const auto columnId = range.fPhysicalColumnId;
+      auto &columnBuf = fBufferedColumns.at(columnId);
       for (auto sealedPageIt = range.fFirst; sealedPageIt != range.fLast;
            ++sealedPageIt) {
-        columnBuf.fNElements += sealedPageIt->GetNElements();
+        const auto nElements = sealedPageIt->GetNElements();
+        columnBuf.fNElements += nElements;
 
         auto &pageBuf = columnBuf.fPages.emplace_back();
         // We can just copy the sealed page: The outer RPageSinkBuf will keep
         // the buffers around after CommitCluster.
         pageBuf.fSealedPage = *sealedPageIt;
-        CountSealedPage(pageBuf.fSealedPage);
+        CountSealedPage(pageBuf.fSealedPage, columnId);
       }
     }
   }
@@ -740,7 +862,7 @@ public:
 
   /// Build a RClusterDescriptor based on the buffered columns and pages and
   /// return its clusterId.
-  DescriptorId_t BuildCluster(NTupleSize_t nNewEntries) {
+  DescriptorId_t BuildCluster(NTupleSize_t nNewEntries, std::uint64_t offset) {
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
     DescriptorId_t clusterId = descriptor.GetNActiveClusters();
 
@@ -760,11 +882,12 @@ public:
         for (auto &pageBuf : columnBuf.fPages) {
           RClusterDescriptor::RPageRange::RPageInfo pageInfo;
           pageInfo.fNElements = pageBuf.fSealedPage.GetNElements();
-          // For the locator, we only set the (compressed) size.
+          pageInfo.fLocator.SetPosition(offset);
           pageInfo.fLocator.SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
           pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
           pageRange.fPageInfos.emplace_back(pageInfo);
+          offset += pageBuf.fSealedPage.GetBufferSize();
         }
         pageRange.fPhysicalColumnId = i;
         // First element index is left unset.
@@ -873,59 +996,81 @@ public:
 
   std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
-    DescriptorId_t clusterId = BuildCluster(nNewEntries);
 
-    // Serialize the cluster and send with MPI.
-    auto buffer = PrepareSendBuffer(clusterId);
-    unsigned char recvBuf[sizeof(std::uint64_t) + kBlobKeyLen];
-    MPI_Status status;
-    {
-      RNTupleAtomicTimer timer(fCounters->fTimeWallCommAggregator,
-                               fCounters->fTimeCpuCommAggregator);
+    std::uint64_t offset = 0;
+    if (fUseGlobalOffset) {
+      auto totalSize = kBlobKeyLen + fSumSealedPages;
+      std::uint64_t padding = 0;
+      if (totalSize % kAggregatorWriteAlignment != 0) {
+        padding +=
+            kAggregatorWriteAlignment - totalSize % kAggregatorWriteAlignment;
+      }
+      offset = GetAndIncrementOffset(totalSize + padding);
+      R__ASSERT(offset % kAggregatorWriteAlignment == 0);
 
-      MPI_Request req[2];
+      // Write the key by prepending it into the fBlock buffer.
+      RNTupleFileWriter::PrepareBlobKey(offset, fSumSealedPages + padding,
+                                        fSumBytesPacked, fBlock);
+      offset += kBlobKeyLen;
+    }
 
-      MPI_Isend(buffer.data(), buffer.size(), MPI_BYTE, fRoot, kTagAggregator,
-                fComm, &req[0]);
+    DescriptorId_t clusterId = BuildCluster(nNewEntries, offset);
 
-      // Get back the reply, the message is empty unless we did not send the
-      // data.
-      MPI_Irecv(&recvBuf[0], sizeof(recvBuf), MPI_BYTE, fRoot, kTagOffset,
-                fComm, &req[1]);
+    if (!fUseGlobalOffset) {
+      // Serialize the cluster and send with MPI.
+      auto buffer = PrepareSendBuffer(clusterId);
+      unsigned char recvBuf[sizeof(std::uint64_t) + kBlobKeyLen];
+      MPI_Status status;
+      {
+        RNTupleAtomicTimer timer(fCounters->fTimeWallCommAggregator,
+                                 fCounters->fTimeCpuCommAggregator);
 
-      if (fReduceRootContention && fAggregator) {
-        fAggregator->WaitForSignal();
+        MPI_Request req[2];
+
+        MPI_Isend(buffer.data(), buffer.size(), MPI_BYTE, fRoot, kTagAggregator,
+                  fComm, &req[0]);
+
+        // Get back the reply, the message is empty unless we did not send the
+        // data.
+        MPI_Irecv(&recvBuf[0], sizeof(recvBuf), MPI_BYTE, fRoot, kTagOffset,
+                  fComm, &req[1]);
+
+        if (fReduceRootContention && fAggregator) {
+          fAggregator->WaitForSignal();
+        }
+
+        MPI_Wait(&req[0], MPI_STATUS_IGNORE);
+        MPI_Wait(&req[1], &status);
       }
 
-      MPI_Wait(&req[0], MPI_STATUS_IGNORE);
-      MPI_Wait(&req[1], &status);
+      if (!fSendData) {
+        // After the aggregator replied, we are guaranteed that it created the
+        // file and we can open it for parallel writing.
+        OpenFile();
+
+#ifndef NDEBUG
+        int count;
+        MPI_Get_count(&status, MPI_BYTE, &count);
+        if (!fAggregatorSendsKey) {
+          assert(count == sizeof(std::uint64_t));
+        } else {
+          assert(count == sizeof(std::uint64_t) + kBlobKeyLen);
+        }
+#endif
+        RNTupleSerializer::DeserializeUInt64(&recvBuf[0], offset);
+
+        if (!fAggregatorSendsKey) {
+          assert(offset % kAggregatorWriteAlignment == 0);
+        } else {
+          assert(offset % kAggregatorWriteAlignment == kBlobKeyLen);
+          // If the aggregator sent the key, write it now.
+          static_assert(kBlobKeyLen < kProcessWriteBufferSize);
+          memcpy(fBlock, &recvBuf[sizeof(std::uint64_t)], kBlobKeyLen);
+        }
+      }
     }
 
     if (!fSendData) {
-      // After the aggregator replied, we are guaranteed that it created the
-      // file and we can open it for parallel writing.
-      OpenFile();
-
-#ifndef NDEBUG
-      int count;
-      MPI_Get_count(&status, MPI_BYTE, &count);
-      if (!fAggregatorSendsKey) {
-        assert(count == sizeof(std::uint64_t));
-      } else {
-        assert(count == sizeof(std::uint64_t) + kBlobKeyLen);
-      }
-#endif
-      std::uint64_t offset;
-      RNTupleSerializer::DeserializeUInt64(&recvBuf[0], offset);
-
-      if (!fAggregatorSendsKey) {
-        assert(offset % kAggregatorWriteAlignment == 0);
-      } else {
-        assert(offset % kAggregatorWriteAlignment == kBlobKeyLen);
-        // If the aggregator sent the key, write it now.
-        static_assert(kBlobKeyLen < kProcessWriteBufferSize);
-        memcpy(fBlock, &recvBuf[sizeof(std::uint64_t)], kBlobKeyLen);
-      }
       WriteSealedPages(offset);
     }
 
@@ -942,14 +1087,168 @@ public:
     const auto sumSealedPages = fSumSealedPages;
     fNPages = 0;
     fSumSealedPages = 0;
+    fSumBytesPacked = 0;
 
     return sumSealedPages;
   }
   void CommitClusterGroup() final {
     // TODO or ignored?
   }
+
+  struct GatheredClusters {
+    std::unique_ptr<int[]> nClusters;
+    std::unique_ptr<int[]> pageListsSizes;
+    std::unique_ptr<int[]> pageListsDispls;
+    std::unique_ptr<unsigned char[]> pageListsBuffer;
+  };
+
+  void AppendClusters(const GatheredClusters &clusters) {
+    assert(fAggregator);
+
+    // Deserialize all clusters: Create temporary descriptors to deserialize
+    // the page lists and for each cluster remember the offset of one page
+    // to establish a linear order.
+    std::size_t totalNClusters = 0;
+    std::vector<RNTupleDescriptor> descriptors(fSize);
+    std::vector<std::vector<std::uint64_t>> clusterOffsets(fSize);
+    for (int i = 0; i < fSize; i++) {
+      const auto nClusters = clusters.nClusters[i];
+      totalNClusters += nClusters;
+
+      RNTupleDescriptorBuilder descriptorBuilder;
+      descriptorBuilder.SetNTuple("ntuple", "");
+      RClusterGroupDescriptorBuilder cgBuilder;
+      cgBuilder.ClusterGroupId(0).NClusters(nClusters);
+      descriptorBuilder.AddClusterGroup(cgBuilder.MoveDescriptor().Unwrap());
+      descriptors[i] = descriptorBuilder.MoveDescriptor();
+      const auto displ = clusters.pageListsDispls[i];
+      RNTupleSerializer::DeserializePageList(
+          &clusters.pageListsBuffer[displ], clusters.pageListsSizes[i], 0,
+          descriptors[i], RNTupleSerializer::EDescriptorDeserializeMode::kRaw);
+
+      auto &offsets = clusterOffsets[i];
+      offsets.reserve(nClusters);
+      for (DescriptorId_t clusterId = 0; clusterId < nClusters; clusterId++) {
+        const auto &clusterDescriptor =
+            descriptors[i].GetClusterDescriptor(clusterId);
+        for (const auto &columnRange :
+             clusterDescriptor.GetColumnRangeIterable()) {
+          if (columnRange.fIsSuppressed) {
+            continue;
+          }
+
+          const auto &pageRange =
+              clusterDescriptor.GetPageRange(columnRange.fPhysicalColumnId);
+          if (pageRange.fPageInfos.empty()) {
+            continue;
+          }
+
+          const auto &firstPage = pageRange.fPageInfos.front();
+          offsets.push_back(firstPage.fLocator.GetPosition<std::uint64_t>());
+          break;
+        }
+      }
+    }
+
+    // Zip clusters into aggregator, ordered by their offset in the file.
+    std::vector<DescriptorId_t> nextCluster(fSize);
+    std::size_t clustersHandled = 0;
+    while (clustersHandled < totalNClusters) {
+      std::uint64_t minOffset = 0;
+      int minOffsetIdx = -1;
+      for (int i = 0; i < fSize; i++) {
+        if (nextCluster[i] >= clusters.nClusters[i]) {
+          continue;
+        }
+
+        if (minOffsetIdx == -1 ||
+            clusterOffsets[i][nextCluster[i]] < minOffset) {
+          minOffset = clusterOffsets[i][nextCluster[i]];
+          minOffsetIdx = i;
+        }
+      }
+      assert(minOffsetIdx != -1);
+
+      fAggregator->AppendCluster(descriptors[minOffsetIdx].GetClusterDescriptor(
+          nextCluster[minOffsetIdx]));
+      nextCluster[minOffsetIdx]++;
+      clustersHandled++;
+    }
+  }
+
+  /// Gather clusters from ranks on the root.
+  void GatherClusters() {
+    // On all ranks, serialize the RClusterDescriptor.
+    const auto &descriptor = fDescriptorBuilder.GetDescriptor();
+    const auto nClusters = descriptor.GetNActiveClusters();
+    std::vector<DescriptorId_t> physClusterIDs;
+    physClusterIDs.reserve(nClusters);
+    for (DescriptorId_t i = 0; i < nClusters; ++i) {
+      physClusterIDs.emplace_back(fSerializationContext.MapClusterId(i));
+    }
+    auto szPageList = RNTupleSerializer::SerializePageList(
+        nullptr, descriptor, physClusterIDs, fSerializationContext);
+
+    std::unique_ptr<unsigned char[]> pageListBuffer(
+        new unsigned char[szPageList]);
+    RNTupleSerializer::SerializePageList(pageListBuffer.get(), descriptor,
+                                         physClusterIDs, fSerializationContext);
+
+    // Send the number of clusters and the sizes of the page list to the root.
+    int nClustersInt = static_cast<int>(nClusters);
+    int szPageListInt = static_cast<int>(szPageList);
+    GatheredClusters clusters;
+    if (fRank == fRoot) {
+      clusters.nClusters.reset(new int[fSize]);
+      clusters.pageListsSizes.reset(new int[fSize]);
+    }
+    MPI_Gather(&nClustersInt, 1, MPI_INT, clusters.nClusters.get(), 1, MPI_INT,
+               fRoot, fComm);
+    MPI_Gather(&szPageListInt, 1, MPI_INT, clusters.pageListsSizes.get(), 1,
+               MPI_INT, fRoot, fComm);
+
+    // The root allocates appropriate buffers and receives the page lists.
+    if (fRank == fRoot) {
+      clusters.pageListsDispls.reset(new int[fSize]);
+      clusters.pageListsDispls[0] = 0;
+      for (int i = 1; i < fSize; i++) {
+        clusters.pageListsDispls[i] =
+            clusters.pageListsDispls[i - 1] + clusters.pageListsSizes[i - 1];
+      }
+      auto sizePageListsBuffer = clusters.pageListsDispls[fSize - 1] +
+                                 clusters.pageListsSizes[fSize - 1];
+      clusters.pageListsBuffer.reset(new unsigned char[sizePageListsBuffer]);
+    }
+    MPI_Gatherv(pageListBuffer.get(), szPageListInt, MPI_BYTE,
+                clusters.pageListsBuffer.get(), clusters.pageListsSizes.get(),
+                clusters.pageListsDispls.get(), MPI_BYTE, fRoot, fComm);
+
+    if (fRank == fRoot) {
+      AppendClusters(clusters);
+    }
+  }
+
   void CommitDatasetImpl() final {
-    MPI_Send(NULL, 0, MPI_BYTE, fRoot, kTagAggregator, fComm);
+    if (!fUseGlobalOffset) {
+      MPI_Send(NULL, 0, MPI_BYTE, fRoot, kTagAggregator, fComm);
+    } else {
+      assert(fOffsetWindow != MPI_WIN_NULL);
+
+      // Gather all serialized clusters. This also synchronizes all ranks, so no
+      // additional barrier is needed.
+      GatherClusters();
+
+      // At the end, get the final offset and seek the aggregator before writing
+      // the metadata.
+      if (fAggregator) {
+        assert(fOffsetPtr != nullptr);
+        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+        std::uint64_t offset = *fOffsetPtr;
+        MPI_Win_unlock(fRoot, fOffsetWindow);
+        fAggregator->Seek(offset);
+      }
+      MPI_Win_free(&fOffsetWindow);
+    }
 
     // Close the file used for parallel writing.
     if (fFileDes > 0) {
@@ -957,8 +1256,10 @@ public:
       fFileDes = -1;
     }
     // On the root, wait for the aggregator and write the metadata.
-    if (fAggregator) {
+    if (fAggregatorThread.joinable()) {
       fAggregatorThread.join();
+    }
+    if (fAggregator) {
       fAggregator->CommitDataset();
       // fAggregator must not be destructed because its metrics can still be
       // queried by the user.
@@ -970,21 +1271,29 @@ public:
 
 std::unique_ptr<ROOT::Experimental::RNTupleWriter>
 RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
-  if (config.fSendKey && config.fSendData) {
-    throw ROOT::RException(
-        R__FAIL("sending key requires writing by all processes"));
-  }
-
   int flag = 0;
   MPI_Initialized(&flag);
   if (!flag) {
     throw ROOT::RException(R__FAIL("MPI library was not initialized"));
   }
-  int provided = -1;
-  MPI_Query_thread(&provided);
-  if (provided != MPI_THREAD_MULTIPLE) {
-    throw ROOT::RException(
-        R__FAIL("RNTupleWriterMPI requires MPI_THREAD_MULTIPLE"));
+
+  if (!config.fUseGlobalOffset) {
+    if (config.fSendKey && config.fSendData) {
+      throw ROOT::RException(
+          R__FAIL("sending key requires writing by all processes"));
+    }
+
+    int provided = -1;
+    MPI_Query_thread(&provided);
+    if (provided != MPI_THREAD_MULTIPLE) {
+      throw ROOT::RException(R__FAIL(
+          "RNTupleWriterMPI with aggregator requires MPI_THREAD_MULTIPLE"));
+    }
+  } else {
+    if (config.fSendData || config.fSendKey) {
+      throw ROOT::RException(
+          R__FAIL("cannot send data or key with global offset"));
+    }
   }
 
   std::unique_ptr<ROOT::Experimental::Internal::RPageSink> sink =
