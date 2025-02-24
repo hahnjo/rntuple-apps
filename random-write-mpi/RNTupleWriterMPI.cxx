@@ -760,11 +760,9 @@ public:
     return clusterId;
   }
 
-  std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
+  /// Serialize the RClusterDescriptor and potentially append the sealed pages.
+  std::vector<unsigned char> PrepareSendBuffer(DescriptorId_t clusterId) {
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
-    DescriptorId_t clusterId = BuildCluster(nNewEntries);
-
-    // Serialize the RClusterDescriptor and send via the socket.
     DescriptorId_t physClusterIDs[] = {
         fSerializationContext.MapClusterId(clusterId)};
     auto szPageList = RNTupleSerializer::SerializePageList(
@@ -774,13 +772,13 @@ public:
     if (fSendData) {
       szBuffer += fSumSealedPages;
     }
-    std::unique_ptr<unsigned char[]> buffer(new unsigned char[szBuffer]);
-    RNTupleSerializer::SerializePageList(buffer.get(), descriptor,
+    std::vector<unsigned char> buffer(szBuffer);
+    RNTupleSerializer::SerializePageList(buffer.data(), descriptor,
                                          physClusterIDs, fSerializationContext);
 
     if (fSendData) {
       // Append all sealed page buffers.
-      unsigned char *ptr = buffer.get() + szPageList;
+      unsigned char *ptr = buffer.data() + szPageList;
       for (auto &columnBuf : fBufferedColumns) {
         for (auto &pageBuf : columnBuf.fPages) {
           auto sealedBufferSize = pageBuf.fSealedPage.GetBufferSize();
@@ -788,9 +786,18 @@ public:
           ptr += sealedBufferSize;
         }
       }
-      assert(ptr == buffer.get() + szBuffer);
+      assert(ptr == buffer.data() + szBuffer);
     }
 
+    return buffer;
+  }
+
+  std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
+    const auto &descriptor = fDescriptorBuilder.GetDescriptor();
+    DescriptorId_t clusterId = BuildCluster(nNewEntries);
+
+    // Serialize the cluster and send with MPI.
+    auto buffer = PrepareSendBuffer(clusterId);
     unsigned char recvBuf[sizeof(std::uint64_t) + kBlobKeyLen];
     MPI_Status status;
     {
@@ -799,8 +806,8 @@ public:
 
       MPI_Request req[2];
 
-      MPI_Isend(buffer.get(), szBuffer, MPI_BYTE, fRoot, kTagAggregator, fComm,
-                &req[0]);
+      MPI_Isend(buffer.data(), buffer.size(), MPI_BYTE, fRoot, kTagAggregator,
+                fComm, &req[0]);
 
       // Get back the reply, the message is empty unless we did not send the
       // data.
