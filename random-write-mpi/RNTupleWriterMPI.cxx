@@ -36,6 +36,9 @@ static constexpr std::size_t kProcessWriteBufferSize = 4 * 1024 * 1024;
 static constexpr int kTagAggregator = 1;
 static constexpr int kTagOffset = 2;
 
+/// Offset in the file to store the global offset (at the beginning by default).
+static constexpr off_t kGlobalOffsetOff = 0;
+
 namespace {
 
 using ROOT::DescriptorId_t;
@@ -597,7 +600,7 @@ class RPageSinkMPI final : public RPageSink {
   /// Whether to reduce contention in the MPI library on the root.
   bool fReduceRootContention;
   /// Whether to write without aggregator, using a global offset.
-  bool fUseGlobalOffset = false;
+  RNTupleWriterMPI::GlobalOffset fUseGlobalOffset = RNTupleWriterMPI::kFalse;
 
 public:
   RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
@@ -646,38 +649,56 @@ public:
     }
 
     if (fUseGlobalOffset) {
-      MPI_Aint winSize = 0;
-      if (fRank == fRoot) {
-        winSize = sizeof(std::uint64_t);
-      }
+      if (fUseGlobalOffset == RNTupleWriterMPI::kOneSidedCommunication) {
+        MPI_Aint winSize = 0;
+        if (fRank == fRoot) {
+          winSize = sizeof(std::uint64_t);
+        }
 
-      // Configure the window that we need.
-      MPI_Info winInfo;
-      MPI_Info_create(&winInfo);
-      // We want to use passive target communication between MPI_Win_lock and
-      // MPI_Win_unlock.
-      MPI_Info_set(winInfo, "no_locks", "false");
-      // It's not clear if the following settings have an effect since we use
-      // MPI_Fetch_and_op and not MPI_Get_accumulate. In any case, we don't need
-      // ordering guarantees since the counter is a single std::uint64_t.
-      MPI_Info_set(winInfo, "accumulate_ordering", "none");
-      // We don't use MPI_NO_OP.
-      MPI_Info_set(winInfo, "accumulate_ops", "same_op");
-      // The counter is a single std::uint64_t.
-      MPI_Info_set(winInfo, "mpi_accumulate_granularity", "8");
-      // The argument disp_unit = 1 is identical on all MPI processes.
-      MPI_Info_set(winInfo, "same_disp_unit", "true");
+        // Configure the window that we need.
+        MPI_Info winInfo;
+        MPI_Info_create(&winInfo);
+        // We want to use passive target communication between MPI_Win_lock and
+        // MPI_Win_unlock.
+        MPI_Info_set(winInfo, "no_locks", "false");
+        // It's not clear if the following settings have an effect since we use
+        // MPI_Fetch_and_op and not MPI_Get_accumulate. In any case, we don't
+        // need ordering guarantees since the counter is a single std::uint64_t.
+        MPI_Info_set(winInfo, "accumulate_ordering", "none");
+        // We don't use MPI_NO_OP.
+        MPI_Info_set(winInfo, "accumulate_ops", "same_op");
+        // The counter is a single std::uint64_t.
+        MPI_Info_set(winInfo, "mpi_accumulate_granularity", "8");
+        // The argument disp_unit = 1 is identical on all MPI processes.
+        MPI_Info_set(winInfo, "same_disp_unit", "true");
 
-      // Set up the window.
-      MPI_Win_allocate(winSize, /*disp_unit=*/1, winInfo, fComm, &fOffsetPtr,
-                       &fOffsetWindow);
-      // Free the info object, not needed anymore.
-      MPI_Info_free(&winInfo);
+        // Set up the window.
+        MPI_Win_allocate(winSize, /*disp_unit=*/1, winInfo, fComm, &fOffsetPtr,
+                         &fOffsetWindow);
+        // Free the info object, not needed anymore.
+        MPI_Info_free(&winInfo);
 
-      if (fRank == fRoot) {
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
-        *fOffsetPtr = fAggregator->GetCurrentOffset();
-        MPI_Win_unlock(fRoot, fOffsetWindow);
+        if (fRank == fRoot) {
+          MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+          *fOffsetPtr = fAggregator->GetCurrentOffset();
+          MPI_Win_unlock(fRoot, fOffsetWindow);
+        }
+      } else {
+        assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks);
+        if (fRank == fRoot) {
+          assert(fAggregator);
+
+          // At this point, the aggregator did not write the header yet and it
+          // won't until we call CommitDataset(). So just put the global offset
+          // at a fixed position.
+          OpenFile();
+          const std::uint64_t offset = fAggregator->GetCurrentOffset();
+          ssize_t written =
+              pwrite(fFileDes, &offset, sizeof(offset), kGlobalOffsetOff);
+          if (written != sizeof(offset)) {
+            throw ROOT::RException(R__FAIL("pwrite() failed"));
+          }
+        }
       }
       MPI_Barrier(fComm);
 
@@ -703,7 +724,12 @@ public:
       return;
     }
 
-    int flags = O_WRONLY;
+    int flags = 0;
+    if (fUseGlobalOffset == RNTupleWriterMPI::kFileLocks) {
+      flags = O_RDWR;
+    } else {
+      flags = O_WRONLY;
+    }
 #ifdef O_LARGEFILE
     // Add the equivalent flag that is passed by fopen64.
     flags |= O_LARGEFILE;
@@ -718,12 +744,52 @@ public:
   }
 
   std::uint64_t GetAndIncrementOffset(std::uint64_t size) {
-    assert(fUseGlobalOffset && fOffsetWindow != MPI_WIN_NULL);
-    MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+    assert(fUseGlobalOffset);
     std::uint64_t offset;
-    MPI_Fetch_and_op(&size, &offset, MPI_UINT64_T, fRoot, 0, MPI_SUM,
-                     fOffsetWindow);
-    MPI_Win_unlock(fRoot, fOffsetWindow);
+    if (fUseGlobalOffset == RNTupleWriterMPI::kOneSidedCommunication) {
+      assert(fOffsetWindow != MPI_WIN_NULL);
+
+      MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+      MPI_Fetch_and_op(&size, &offset, MPI_UINT64_T, fRoot, 0, MPI_SUM,
+                       fOffsetWindow);
+      MPI_Win_unlock(fRoot, fOffsetWindow);
+    } else {
+      assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks);
+      assert(fFileDes >= 0);
+
+      // Increment the counter: lock the whole file
+      struct flock fl;
+      fl.l_type = F_WRLCK;
+      fl.l_whence = SEEK_SET;
+      fl.l_start = kGlobalOffsetOff;
+      fl.l_len = sizeof(offset);
+      fl.l_pid = getpid();
+      if (fcntl(fFileDes, F_SETLKW, &fl) == -1) {
+        throw ROOT::RException(
+            R__FAIL(std::string("lock failed: ") + strerror(errno)));
+      }
+
+      ssize_t read = pread(fFileDes, &offset, sizeof(offset), kGlobalOffsetOff);
+      if (read != sizeof(offset)) {
+        throw ROOT::RException(
+            R__FAIL(std::string("read failed: ") + strerror(errno)));
+      }
+      const std::uint64_t update = offset + size;
+      ssize_t written =
+          pwrite(fFileDes, &update, sizeof(update), kGlobalOffsetOff);
+      if (written != sizeof(update)) {
+        throw ROOT::RException(
+            R__FAIL(std::string("write failed: ") + strerror(errno)));
+      }
+
+      // Release the lock.
+      fl.l_type = F_UNLCK;
+      if (fcntl(fFileDes, F_SETLKW, &fl) == -1) {
+        throw ROOT::RException(
+            R__FAIL(std::string("unlock failed: ") + strerror(errno)));
+      }
+    }
+
     return offset;
   }
 
@@ -1232,8 +1298,6 @@ public:
     if (!fUseGlobalOffset) {
       MPI_Send(NULL, 0, MPI_BYTE, fRoot, kTagAggregator, fComm);
     } else {
-      assert(fOffsetWindow != MPI_WIN_NULL);
-
       // Gather all serialized clusters. This also synchronizes all ranks, so no
       // additional barrier is needed.
       GatherClusters();
@@ -1241,13 +1305,21 @@ public:
       // At the end, get the final offset and seek the aggregator before writing
       // the metadata.
       if (fAggregator) {
-        assert(fOffsetPtr != nullptr);
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
-        std::uint64_t offset = *fOffsetPtr;
-        MPI_Win_unlock(fRoot, fOffsetWindow);
+        std::uint64_t offset;
+        if (fUseGlobalOffset == RNTupleWriterMPI::kOneSidedCommunication) {
+          assert(fOffsetWindow != MPI_WIN_NULL);
+          assert(fOffsetPtr != nullptr);
+          MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
+          offset = *fOffsetPtr;
+          MPI_Win_unlock(fRoot, fOffsetWindow);
+        } else {
+          offset = GetAndIncrementOffset(0);
+        }
         fAggregator->Seek(offset);
       }
-      MPI_Win_free(&fOffsetWindow);
+      if (fOffsetWindow != MPI_WIN_NULL) {
+        MPI_Win_free(&fOffsetWindow);
+      }
     }
 
     // Close the file used for parallel writing.

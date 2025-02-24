@@ -20,6 +20,12 @@ class RNTupleWriter;
 /// Write RNTuple data collectively from multiple processes using MPI.
 class RNTupleWriterMPI {
 public:
+  enum GlobalOffset {
+    kFalse = 0,
+    kOneSidedCommunication = 1,
+    kFileLocks = 2,
+  };
+
   struct Config {
     /// The model to write the ntuple.
     std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
@@ -41,7 +47,7 @@ public:
     /// Whether to reduce contention in the MPI library on the root.
     bool fReduceRootContention = false;
     /// Whether to write without aggregator, using a global offset.
-    bool fUseGlobalOffset = false;
+    GlobalOffset fUseGlobalOffset = kFalse;
   };
 
 private:
