@@ -495,6 +495,11 @@ class RPageSinkMPI final : public RPageSink {
   /// A list of all known columns, indexed by their physical id.
   std::vector<RColumnBuf> fBufferedColumns;
 
+  /// The number of buffered pages.
+  std::uint64_t fNPages = 0;
+  /// The sum of all sealed pages.
+  std::uint64_t fSumSealedPages = 0;
+
   /// A dummy serialization context to send information about a cluster to the
   /// aggregator; see CommitCluster.
   RNTupleSerializer::RContext fSerializationContext;
@@ -654,6 +659,10 @@ public:
   void CommitSuppressedColumn(ColumnHandle_t columnHandle) final {
     fBufferedColumns.at(columnHandle.fPhysicalId).fIsSuppressed = true;
   }
+  void CountSealedPage(const RPageStorage::RSealedPage &sealedPage) {
+    fNPages++;
+    fSumSealedPages += sealedPage.GetBufferSize();
+  }
   void CommitPage(ColumnHandle_t columnHandle, const RPage &page) final {
     assert(!fOptions->GetUseBufferedWrite());
     auto &pageBuf =
@@ -672,6 +681,7 @@ public:
     config.fAllowAlias = false;
     config.fBuffer = pageBuf.fBuffer.get();
     pageBuf.fSealedPage = SealPage(config);
+    CountSealedPage(pageBuf.fSealedPage);
   }
   void CommitSealedPage(DescriptorId_t, const RSealedPage &) final {
     throw ROOT::RException(
@@ -695,6 +705,7 @@ public:
         // We can just copy the sealed page: The outer RPageSinkBuf will keep
         // the buffers around after CommitCluster.
         pageBuf.fSealedPage = *sealedPageIt;
+        CountSealedPage(pageBuf.fSealedPage);
       }
     }
   }
@@ -712,8 +723,6 @@ public:
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
 
     // Build a RClusterDescriptor based on the buffered columns and pages.
-    std::uint64_t nPages = 0;
-    std::uint64_t sumSealedPages = 0;
     RClusterDescriptorBuilder clusterBuilder;
     DescriptorId_t clusterId = descriptor.GetNActiveClusters();
     // First entry index are left unset.
@@ -735,8 +744,6 @@ public:
           pageInfo.fLocator.SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
           pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
-          nPages++;
-          sumSealedPages += pageBuf.fSealedPage.GetBufferSize();
           pageRange.fPageInfos.emplace_back(pageInfo);
         }
         pageRange.fPhysicalColumnId = i;
@@ -757,7 +764,7 @@ public:
 
     auto szBuffer = szPageList;
     if (fSendData) {
-      szBuffer += sumSealedPages;
+      szBuffer += fSumSealedPages;
     }
     std::unique_ptr<unsigned char[]> buffer(new unsigned char[szBuffer]);
     RNTupleSerializer::SerializePageList(buffer.get(), descriptor,
@@ -906,8 +913,12 @@ public:
       columnBuf.fIsSuppressed = false;
     }
 
-    fCounters->fNPageCommitted.Add(nPages);
-    fCounters->fSzWritePayload.Add(sumSealedPages);
+    fCounters->fNPageCommitted.Add(fNPages);
+    fCounters->fSzWritePayload.Add(fSumSealedPages);
+
+    const auto sumSealedPages = fSumSealedPages;
+    fNPages = 0;
+    fSumSealedPages = 0;
 
     return sumSealedPages;
   }
