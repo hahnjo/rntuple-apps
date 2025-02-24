@@ -811,6 +811,66 @@ public:
     return buffer;
   }
 
+  /// Write all sealed page in order. fBlock may already have data before
+  /// offset % kAggregatorWriteAlignment, for example the key header.
+  void WriteSealedPages(std::uint64_t offset) {
+    assert(fFileDes >= 0 && "OpenFile() should be called");
+
+    std::uint64_t blockOffset = offset - offset % kAggregatorWriteAlignment;
+
+    RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
+                             fCounters->fTimeCpuWrite);
+
+    for (auto &columnBuf : fBufferedColumns) {
+      for (auto &pageBuf : columnBuf.fPages) {
+        auto nBytesPage = pageBuf.fSealedPage.GetBufferSize();
+        const unsigned char *buffer =
+            static_cast<const unsigned char *>(pageBuf.fSealedPage.GetBuffer());
+        while (nBytesPage > 0) {
+          std::uint64_t posInBlock = offset - blockOffset;
+          if (posInBlock >= kProcessWriteBufferSize) {
+            // Write the block.
+            std::size_t retval =
+                pwrite(fFileDes, fBlock, kProcessWriteBufferSize, blockOffset);
+            if (retval != kProcessWriteBufferSize)
+              throw ROOT::RException(
+                  R__FAIL(std::string("write failed: ") + strerror(errno)));
+
+            // Null the buffer contents for good measure.
+            memset(fBlock, 0, kProcessWriteBufferSize);
+            posInBlock = offset % kAggregatorWriteAlignment;
+            blockOffset = offset - posInBlock;
+          }
+
+          std::size_t blockSize = nBytesPage;
+          if (blockSize > kProcessWriteBufferSize - posInBlock) {
+            blockSize = kProcessWriteBufferSize - posInBlock;
+          }
+          memcpy(fBlock + posInBlock, buffer, blockSize);
+          buffer += blockSize;
+          nBytesPage -= blockSize;
+          offset += blockSize;
+        }
+      }
+    }
+
+    // Flush the buffer if any data left.
+    if (offset > blockOffset) {
+      std::size_t lastBlockSize = offset - blockOffset;
+      // Round up to a multiple of kAggregatorWriteAlignment.
+      lastBlockSize += kAggregatorWriteAlignment - 1;
+      lastBlockSize = (lastBlockSize / kAggregatorWriteAlignment) *
+                      kAggregatorWriteAlignment;
+      std::size_t retval = pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
+      if (retval != lastBlockSize)
+        throw ROOT::RException(
+            R__FAIL(std::string("write failed: ") + strerror(errno)));
+
+      // Null the buffer contents for good measure.
+      memset(fBlock, 0, kProcessWriteBufferSize);
+    }
+  }
+
   std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
     DescriptorId_t clusterId = BuildCluster(nNewEntries);
@@ -857,74 +917,16 @@ public:
 #endif
       std::uint64_t offset;
       RNTupleSerializer::DeserializeUInt64(&recvBuf[0], offset);
-      std::uint64_t blockOffset = offset;
 
-      {
-        RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
-                                 fCounters->fTimeCpuWrite);
-
-        if (!fAggregatorSendsKey) {
-          assert(offset % kAggregatorWriteAlignment == 0);
-        } else {
-          assert(offset % kAggregatorWriteAlignment == kBlobKeyLen);
-          blockOffset -= kBlobKeyLen;
-          // If the aggregator sent the key, write it now.
-          static_assert(kBlobKeyLen < kProcessWriteBufferSize);
-          memcpy(fBlock, &recvBuf[sizeof(std::uint64_t)], kBlobKeyLen);
-        }
-        assert(blockOffset % kAggregatorWriteAlignment == 0);
-
-        // Write the sealed page buffers in the same order.
-        for (auto &columnBuf : fBufferedColumns) {
-          for (auto &pageBuf : columnBuf.fPages) {
-            auto nBytesPage = pageBuf.fSealedPage.GetBufferSize();
-            const unsigned char *buffer = static_cast<const unsigned char *>(
-                pageBuf.fSealedPage.GetBuffer());
-            while (nBytesPage > 0) {
-              std::uint64_t posInBlock = offset - blockOffset;
-              if (posInBlock >= kProcessWriteBufferSize) {
-                // Write the block.
-                std::size_t retval = pwrite(
-                    fFileDes, fBlock, kProcessWriteBufferSize, blockOffset);
-                if (retval != kProcessWriteBufferSize)
-                  throw ROOT::RException(
-                      R__FAIL(std::string("write failed: ") + strerror(errno)));
-
-                // Null the buffer contents for good measure.
-                memset(fBlock, 0, kProcessWriteBufferSize);
-                posInBlock = offset % kAggregatorWriteAlignment;
-                blockOffset = offset - posInBlock;
-              }
-
-              std::size_t blockSize = nBytesPage;
-              if (blockSize > kProcessWriteBufferSize - posInBlock) {
-                blockSize = kProcessWriteBufferSize - posInBlock;
-              }
-              memcpy(fBlock + posInBlock, buffer, blockSize);
-              buffer += blockSize;
-              nBytesPage -= blockSize;
-              offset += blockSize;
-            }
-          }
-        }
-
-        // Flush the buffer if any data left.
-        if (offset > blockOffset) {
-          std::size_t lastBlockSize = offset - blockOffset;
-          // Round up to a multiple of kAggregatorWriteAlignment.
-          lastBlockSize += kAggregatorWriteAlignment - 1;
-          lastBlockSize = (lastBlockSize / kAggregatorWriteAlignment) *
-                          kAggregatorWriteAlignment;
-          std::size_t retval =
-              pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
-          if (retval != lastBlockSize)
-            throw ROOT::RException(
-                R__FAIL(std::string("write failed: ") + strerror(errno)));
-
-          // Null the buffer contents for good measure.
-          memset(fBlock, 0, kProcessWriteBufferSize);
-        }
+      if (!fAggregatorSendsKey) {
+        assert(offset % kAggregatorWriteAlignment == 0);
+      } else {
+        assert(offset % kAggregatorWriteAlignment == kBlobKeyLen);
+        // If the aggregator sent the key, write it now.
+        static_assert(kBlobKeyLen < kProcessWriteBufferSize);
+        memcpy(fBlock, &recvBuf[sizeof(std::uint64_t)], kBlobKeyLen);
       }
+      WriteSealedPages(offset);
     }
 
     // Clean up all buffered columns and pages.
