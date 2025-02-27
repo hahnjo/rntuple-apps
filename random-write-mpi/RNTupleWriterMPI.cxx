@@ -668,7 +668,7 @@ public:
     RSealPageConfig config;
     config.fPage = &page;
     config.fElement = columnHandle.fColumn->GetElement();
-    config.fCompressionSetting = GetWriteOptions().GetCompression();
+    config.fCompressionSettings = GetWriteOptions().GetCompression();
     config.fWriteChecksum = GetWriteOptions().GetEnablePageChecksums();
     config.fAllowAlias = false;
     config.fBuffer = pageBuf.fBuffer.get();
