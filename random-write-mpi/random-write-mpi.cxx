@@ -26,7 +26,6 @@
 #include <unistd.h>
 
 using ROOT::Experimental::RNTupleModel;
-using ROOT::Experimental::RNTupleWriteOptions;
 
 static void CallFsync(const char *filename) {
   int fd = open(filename, O_RDWR);

@@ -37,7 +37,7 @@ public:
     /// the clients (see zmq_connect).
     std::string_view fEndpoint;
     /// Options for writing the ntuple.
-    ROOT::Experimental::RNTupleWriteOptions fOptions;
+    ROOT::RNTupleWriteOptions fOptions;
     /// Whether to send the payload data to the server. If not, clients only
     /// send the metadata and get back an offset to write the payload data
     /// themselves. This mode is more efficient, but requires that all processes

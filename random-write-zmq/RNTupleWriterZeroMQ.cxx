@@ -75,7 +75,6 @@ using ROOT::Experimental::RClusterDescriptor;
 using ROOT::Experimental::RExtraTypeInfoDescriptor;
 using ROOT::Experimental::RNTupleDescriptor;
 using ROOT::Experimental::RNTupleModel;
-using ROOT::Experimental::RNTupleWriteOptions;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Internal::GetFieldZeroOfModel;
 using ROOT::Experimental::Internal::GetProjectedFieldsOfModel;
@@ -124,7 +123,7 @@ public:
     // Create the file writer, but force the write buffer size to avoid
     // overlapping writes on server and client.
     // TODO: This is pessimistic for writing the header and footer...
-    RNTupleWriteOptions options = config.fOptions;
+    ROOT::RNTupleWriteOptions options = config.fOptions;
     if (!fClientsSendData) {
       options.SetWriteBufferSize(kServerClientWriteAlignment);
     }

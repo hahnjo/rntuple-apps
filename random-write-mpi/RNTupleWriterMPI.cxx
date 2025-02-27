@@ -45,7 +45,6 @@ using ROOT::Experimental::RClusterDescriptor;
 using ROOT::Experimental::RExtraTypeInfoDescriptor;
 using ROOT::Experimental::RNTupleDescriptor;
 using ROOT::Experimental::RNTupleModel;
-using ROOT::Experimental::RNTupleWriteOptions;
 using ROOT::Experimental::Detail::RNTupleAtomicCounter;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Detail::RNTupleMetrics;
@@ -97,7 +96,7 @@ public:
     // Create the file writer, but force the write buffer size to avoid
     // overlapping writes on aggregator and processes.
     // TODO: This is pessimistic for writing the header and footer...
-    RNTupleWriteOptions options = config.fOptions;
+    ROOT::RNTupleWriteOptions options = config.fOptions;
     if (!fProcessesSendData) {
       options.SetWriteBufferSize(kAggregatorWriteAlignment);
     }

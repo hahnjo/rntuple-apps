@@ -28,7 +28,7 @@ public:
     /// Storage path for the ntuple.
     std::string_view fStorage;
     /// Options for writing the ntuple.
-    ROOT::Experimental::RNTupleWriteOptions fOptions;
+    ROOT::RNTupleWriteOptions fOptions;
     /// Whether to send the payload data via MPI. If not, processes only send
     /// the metadata and get back an offset to write the payload data
     /// themselves. This mode is more efficient, but requires that all processes
