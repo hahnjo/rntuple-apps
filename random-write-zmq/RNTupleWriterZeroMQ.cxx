@@ -381,7 +381,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
       nColumns--;
 
       auto &columnRange = clusterDescriptor.GetColumnRange(columnId);
-      if (columnRange.fIsSuppressed) {
+      if (columnRange.IsSuppressed()) {
         // TODO: Mark as suppressed
         columnId++;
         continue;
@@ -391,10 +391,10 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
       RPageStorage::SealedPageSequence_t sealedPages;
       for (const auto &pageInfo : pageRange.fPageInfos) {
         const auto bufferSize =
-            pageInfo.fLocator.GetNBytesOnStorage() +
-            pageInfo.fHasChecksum * RPageStorage::kNBytesPageChecksum;
-        sealedPages.emplace_back(ptr, bufferSize, pageInfo.fNElements,
-                                 pageInfo.fHasChecksum);
+            pageInfo.GetLocator().GetNBytesOnStorage() +
+            pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
+        sealedPages.emplace_back(ptr, bufferSize, pageInfo.GetNElements(),
+                                 pageInfo.HasChecksum());
         if (ptr) {
           ptr += bufferSize;
         }
@@ -655,11 +655,11 @@ public:
         RClusterDescriptor::RPageRange pageRange;
         for (auto &pageBuf : columnBuf.fPages) {
           RClusterDescriptor::RPageRange::RPageInfo pageInfo;
-          pageInfo.fNElements = pageBuf.fSealedPage.GetNElements();
+          pageInfo.SetNElements(pageBuf.fSealedPage.GetNElements());
           // For the locator, we only set the (compressed) size.
-          pageInfo.fLocator.SetNBytesOnStorage(
+          pageInfo.GetLocator().SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
-          pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
+          pageInfo.SetHasChecksum(pageBuf.fSealedPage.GetHasChecksum());
           sumSealedPages += pageBuf.fSealedPage.GetBufferSize();
           pageRange.fPageInfos.emplace_back(pageInfo);
         }

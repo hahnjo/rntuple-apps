@@ -127,19 +127,19 @@ public:
     std::uint64_t nBytesWritten = 0;
     for (const auto &columnRange : clusterDescriptor.GetColumnRangeIterable()) {
       const auto &pageRange =
-          clusterDescriptor.GetPageRange(columnRange.fPhysicalColumnId);
+          clusterDescriptor.GetPageRange(columnRange.GetPhysicalColumnId());
       nPages += pageRange.fPageInfos.size();
       for (const auto &pageInfo : pageRange.fPageInfos) {
-        nBytesWritten += pageInfo.fLocator.GetNBytesOnStorage();
+        nBytesWritten += pageInfo.GetLocator().GetNBytesOnStorage();
       }
 
       // Just copy all members into a column info.
       RStagedCluster::RColumnInfo columnInfo;
       columnInfo.fPageRange = pageRange.Clone();
-      columnInfo.fNElements = columnRange.fNElements;
+      columnInfo.fNElements = columnRange.GetNElements();
       columnInfo.fCompressionSettings =
-          columnRange.fCompressionSettings.value();
-      columnInfo.fIsSuppressed = columnRange.fIsSuppressed;
+          columnRange.GetCompressionSettings().value();
+      columnInfo.fIsSuppressed = columnRange.IsSuppressed();
       stagedCluster.fColumnInfos.push_back(std::move(columnInfo));
     }
 
@@ -465,7 +465,7 @@ public:
         nColumns--;
 
         auto &columnRange = clusterDescriptor.GetColumnRange(columnId);
-        if (columnRange.fIsSuppressed) {
+        if (columnRange.IsSuppressed()) {
           // TODO: Mark as suppressed
           columnId++;
           continue;
@@ -475,10 +475,10 @@ public:
         RPageStorage::SealedPageSequence_t sealedPages;
         for (const auto &pageInfo : pageRange.fPageInfos) {
           const auto bufferSize =
-              pageInfo.fLocator.GetNBytesOnStorage() +
-              pageInfo.fHasChecksum * RPageStorage::kNBytesPageChecksum;
-          sealedPages.emplace_back(ptr, bufferSize, pageInfo.fNElements,
-                                   pageInfo.fHasChecksum);
+              pageInfo.GetLocator().GetNBytesOnStorage() +
+              pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
+          sealedPages.emplace_back(ptr, bufferSize, pageInfo.GetNElements(),
+                                   pageInfo.HasChecksum());
           if (ptr) {
             ptr += bufferSize;
           }
@@ -946,11 +946,11 @@ public:
         RClusterDescriptor::RPageRange pageRange;
         for (auto &pageBuf : columnBuf.fPages) {
           RClusterDescriptor::RPageRange::RPageInfo pageInfo;
-          pageInfo.fNElements = pageBuf.fSealedPage.GetNElements();
-          pageInfo.fLocator.SetPosition(offset);
-          pageInfo.fLocator.SetNBytesOnStorage(
+          pageInfo.SetNElements(pageBuf.fSealedPage.GetNElements());
+          pageInfo.GetLocator().SetPosition(offset);
+          pageInfo.GetLocator().SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
-          pageInfo.fHasChecksum = pageBuf.fSealedPage.GetHasChecksum();
+          pageInfo.SetHasChecksum(pageBuf.fSealedPage.GetHasChecksum());
           pageRange.fPageInfos.emplace_back(pageInfo);
           offset += pageBuf.fSealedPage.GetBufferSize();
         }
@@ -1198,18 +1198,19 @@ public:
             descriptors[i].GetClusterDescriptor(clusterId);
         for (const auto &columnRange :
              clusterDescriptor.GetColumnRangeIterable()) {
-          if (columnRange.fIsSuppressed) {
+          if (columnRange.IsSuppressed()) {
             continue;
           }
 
           const auto &pageRange =
-              clusterDescriptor.GetPageRange(columnRange.fPhysicalColumnId);
+              clusterDescriptor.GetPageRange(columnRange.GetPhysicalColumnId());
           if (pageRange.fPageInfos.empty()) {
             continue;
           }
 
           const auto &firstPage = pageRange.fPageInfos.front();
-          offsets.push_back(firstPage.fLocator.GetPosition<std::uint64_t>());
+          offsets.push_back(
+              firstPage.GetLocator().GetPosition<std::uint64_t>());
           break;
         }
       }
