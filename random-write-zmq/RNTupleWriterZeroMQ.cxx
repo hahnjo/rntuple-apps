@@ -676,8 +676,10 @@ public:
     // Serialize the RClusterDescriptor and send via the socket.
     DescriptorId_t physClusterIDs[] = {
         fSerializationContext.MapClusterId(clusterId)};
-    auto szPageList = RNTupleSerializer::SerializePageList(
-        nullptr, descriptor, physClusterIDs, fSerializationContext);
+    auto szPageList =
+        RNTupleSerializer::SerializePageList(
+            nullptr, descriptor, physClusterIDs, fSerializationContext)
+            .Unwrap();
 
     auto szBuffer = szPageList;
     if (fSendData) {

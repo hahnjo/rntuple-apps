@@ -972,8 +972,10 @@ public:
     const auto &descriptor = fDescriptorBuilder.GetDescriptor();
     DescriptorId_t physClusterIDs[] = {
         fSerializationContext.MapClusterId(clusterId)};
-    auto szPageList = RNTupleSerializer::SerializePageList(
-        nullptr, descriptor, physClusterIDs, fSerializationContext);
+    auto szPageList =
+        RNTupleSerializer::SerializePageList(
+            nullptr, descriptor, physClusterIDs, fSerializationContext)
+            .Unwrap();
 
     auto szBuffer = szPageList;
     if (fSendData) {
@@ -1252,8 +1254,10 @@ public:
     for (DescriptorId_t i = 0; i < nClusters; ++i) {
       physClusterIDs.emplace_back(fSerializationContext.MapClusterId(i));
     }
-    auto szPageList = RNTupleSerializer::SerializePageList(
-        nullptr, descriptor, physClusterIDs, fSerializationContext);
+    auto szPageList =
+        RNTupleSerializer::SerializePageList(
+            nullptr, descriptor, physClusterIDs, fSerializationContext)
+            .Unwrap();
 
     std::unique_ptr<unsigned char[]> pageListBuffer(
         new unsigned char[szPageList]);
