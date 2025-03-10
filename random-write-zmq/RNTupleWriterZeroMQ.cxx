@@ -83,7 +83,6 @@ using ROOT::Experimental::Internal::RClusterGroupDescriptorBuilder;
 using ROOT::Experimental::Internal::RColumn;
 using ROOT::Experimental::Internal::RColumnDescriptorBuilder;
 using ROOT::Experimental::Internal::RFieldDescriptorBuilder;
-using ROOT::Experimental::Internal::RNTupleCompressor;
 using ROOT::Experimental::Internal::RNTupleDescriptorBuilder;
 using ROOT::Experimental::Internal::RNTupleFileWriter;
 static constexpr auto kBlobKeyLen =
@@ -94,6 +93,7 @@ using ROOT::Experimental::Internal::RPage;
 using ROOT::Experimental::Internal::RPagePersistentSink;
 using ROOT::Experimental::Internal::RPageSink;
 using ROOT::Experimental::Internal::RPageStorage;
+using ROOT::Internal::RNTupleCompressor;
 
 /// A persistent page sink based on RPageSinkFile used by the
 /// RNTupleWriterZeroMQ server.
@@ -115,7 +115,6 @@ public:
   RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
       : RPagePersistentSink(config.fNTupleName, config.fOptions),
         fClientsSendData(config.fSendData), fSendKey(config.fSendKey) {
-    fCompressor = std::make_unique<RNTupleCompressor>();
     EnableDefaultMetrics("RPageSinkZeroMQ");
     // No support for merging pages at the moment
     fFeatures.fCanMergePages = false;
@@ -140,9 +139,9 @@ public:
                 std::uint32_t length) override {
     // Copied from RPageSinkFile::InitImpl
     std::unique_ptr<unsigned char[]> zipBuffer(new unsigned char[length]);
-    auto szZipHeader = fCompressor->Zip(
+    auto szZipHeader = RNTupleCompressor::Zip(
         serializedHeader, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(zipBuffer.get()));
+        zipBuffer.get());
     auto offset =
         fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
     fCurrentOffset = offset + szZipHeader;
@@ -296,9 +295,9 @@ public:
                                         std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitClusterGroupImpl
     std::unique_ptr<unsigned char[]> bufPageListZip(new unsigned char[length]);
-    auto szPageListZip = fCompressor->Zip(
+    auto szPageListZip = RNTupleCompressor::Zip(
         serializedPageList, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(bufPageListZip.get()));
+        bufPageListZip.get());
 
     RNTupleLocator result;
     result.SetNBytesOnStorage(szPageListZip);
@@ -311,9 +310,9 @@ public:
     // Copied from RPageSinkFile::CommitDatasetImpl
     fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
     std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
-    auto szFooterZip = fCompressor->Zip(
+    auto szFooterZip = RNTupleCompressor::Zip(
         serializedFooter, length, GetWriteOptions().GetCompression(),
-        RNTupleCompressor::MakeMemCopyWriter(bufFooterZip.get()));
+        bufFooterZip.get());
     fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
     fWriter->Commit();
   }
