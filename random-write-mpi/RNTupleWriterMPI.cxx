@@ -603,6 +603,9 @@ class RPageSinkMPI final : public RPageSink {
   bool fReduceRootContention;
   /// Whether to write without aggregator, using a global offset.
   RNTupleWriterMPI::GlobalOffset fUseGlobalOffset = RNTupleWriterMPI::kFalse;
+  /// The opened file descriptor to store the global offset (may alias
+  /// fFileDes).
+  int fGlobalOffsetFileDes = -1;
 
 public:
   RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
@@ -686,7 +689,8 @@ public:
           MPI_Win_unlock(fRoot, fOffsetWindow);
         }
       } else {
-        assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks);
+        assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks ||
+               fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame);
         if (fRank == fRoot) {
           assert(fAggregator);
 
@@ -694,9 +698,10 @@ public:
           // won't until we call CommitDataset(). So just put the global offset
           // at a fixed position.
           OpenFile();
+          OpenGlobalOffsetFile(true);
           const std::uint64_t offset = fAggregator->GetCurrentOffset();
-          ssize_t written =
-              pwrite(fFileDes, &offset, sizeof(offset), kGlobalOffsetOff);
+          ssize_t written = pwrite(fGlobalOffsetFileDes, &offset,
+                                   sizeof(offset), kGlobalOffsetOff);
           if (written != sizeof(offset)) {
             throw ROOT::RException(R__FAIL("pwrite() failed"));
           }
@@ -707,11 +712,16 @@ public:
       // After the barrier, we are guaranteed that the root created the file and
       // we can open it for parallel writing.
       OpenFile();
+      if (fUseGlobalOffset == RNTupleWriterMPI::kFileLocks ||
+          fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame) {
+        OpenGlobalOffsetFile();
+      }
     }
   }
 
   ~RPageSinkMPI() final {
     assert(fFileDes < 0 && "CommitDataset() should be called");
+    assert(fGlobalOffsetFileDes < 0 && "CommitDataset() should be called");
 
     if (fBlock) {
       std::align_val_t blockAlign{kAggregatorWriteAlignment};
@@ -727,7 +737,8 @@ public:
     }
 
     int flags = 0;
-    if (fUseGlobalOffset == RNTupleWriterMPI::kFileLocks) {
+    if (fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame) {
+      // If we use a single file, we need to read and write.
       flags = O_RDWR;
     } else {
       flags = O_WRONLY;
@@ -745,6 +756,30 @@ public:
     }
   }
 
+  std::string GetOffsetStorage() const { return fStorage + ".offset"; }
+
+  void OpenGlobalOffsetFile(bool create = false) {
+    if (fGlobalOffsetFileDes >= 0) {
+      return;
+    }
+    if (fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame) {
+      assert(fFileDes >= 0);
+      fGlobalOffsetFileDes = fFileDes;
+      return;
+    }
+    assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks);
+
+    std::string offsetStorage = GetOffsetStorage();
+    int flags = O_RDWR;
+    if (create) {
+      flags |= O_CREAT | O_TRUNC;
+    }
+    fGlobalOffsetFileDes = open(offsetStorage.c_str(), flags, 0666);
+    if (fGlobalOffsetFileDes < 0) {
+      throw ROOT::RException(R__FAIL("open() failed (for global offset file)"));
+    }
+  }
+
   std::uint64_t GetAndIncrementOffset(std::uint64_t size) {
     assert(fUseGlobalOffset);
     std::uint64_t offset;
@@ -756,8 +791,9 @@ public:
                        fOffsetWindow);
       MPI_Win_unlock(fRoot, fOffsetWindow);
     } else {
-      assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks);
-      assert(fFileDes >= 0);
+      assert(fUseGlobalOffset == RNTupleWriterMPI::kFileLocks ||
+             fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame);
+      assert(fGlobalOffsetFileDes >= 0);
 
       // Increment the counter: lock the whole file
       struct flock fl;
@@ -766,19 +802,20 @@ public:
       fl.l_start = kGlobalOffsetOff;
       fl.l_len = sizeof(offset);
       fl.l_pid = getpid();
-      if (fcntl(fFileDes, F_SETLKW, &fl) == -1) {
+      if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
         throw ROOT::RException(
             R__FAIL(std::string("lock failed: ") + strerror(errno)));
       }
 
-      ssize_t read = pread(fFileDes, &offset, sizeof(offset), kGlobalOffsetOff);
+      ssize_t read = pread(fGlobalOffsetFileDes, &offset, sizeof(offset),
+                           kGlobalOffsetOff);
       if (read != sizeof(offset)) {
         throw ROOT::RException(
             R__FAIL(std::string("read failed: ") + strerror(errno)));
       }
       const std::uint64_t update = offset + size;
-      ssize_t written =
-          pwrite(fFileDes, &update, sizeof(update), kGlobalOffsetOff);
+      ssize_t written = pwrite(fGlobalOffsetFileDes, &update, sizeof(update),
+                               kGlobalOffsetOff);
       if (written != sizeof(update)) {
         throw ROOT::RException(
             R__FAIL(std::string("write failed: ") + strerror(errno)));
@@ -786,7 +823,7 @@ public:
 
       // Release the lock.
       fl.l_type = F_UNLCK;
-      if (fcntl(fFileDes, F_SETLKW, &fl) == -1) {
+      if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
         throw ROOT::RException(
             R__FAIL(std::string("unlock failed: ") + strerror(errno)));
       }
@@ -1326,6 +1363,18 @@ public:
       }
       if (fOffsetWindow != MPI_WIN_NULL) {
         MPI_Win_free(&fOffsetWindow);
+      }
+      if (fGlobalOffsetFileDes != -1) {
+        // fGlobalOffsetFileDes may alias fFileDes, only close it once below.
+        // Also only then the root may remove the file.
+        if (fGlobalOffsetFileDes != fFileDes) {
+          close(fGlobalOffsetFileDes);
+          if (fRank == fRoot) {
+            // Note: some ranks may still have the file open. This is fine.
+            remove(GetOffsetStorage().c_str());
+          }
+        }
+        fGlobalOffsetFileDes = -1;
       }
     }
 

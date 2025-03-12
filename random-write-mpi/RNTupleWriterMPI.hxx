@@ -22,8 +22,12 @@ class RNTupleWriterMPI {
 public:
   enum GlobalOffset {
     kFalse = 0,
+    /// Maintain global offset using MPI one-sided communication.
     kOneSidedCommunication = 1,
+    /// Maintain global offset using file locks on a separate file.
     kFileLocks = 2,
+    /// Maintain global offset using file locks in the same output file.
+    kFileLocksSame = 3,
   };
 
   struct Config {

@@ -64,7 +64,8 @@ int main(int argc, char *argv[]) {
   //
   // mode & 8 = 1: aggregator-less writing using global offset
   //   mode & 3 = 0: one-sided communication
-  //   mode & 3 = 1: file locks
+  //   mode & 3 = 1: file locks on a separate file
+  //   mode & 3 = 2: file locks in the same output file
   //
   // mode & 16 = 1: same implementation, but enable Direct I/O
   int mode = 1;
@@ -105,8 +106,14 @@ int main(int argc, char *argv[]) {
     config.fSendData = false;
     if ((mode & 3) == 0) {
       config.fUseGlobalOffset = RNTupleWriterMPI::kOneSidedCommunication;
-    } else {
+    } else if ((mode & 3) == 1) {
       config.fUseGlobalOffset = RNTupleWriterMPI::kFileLocks;
+    } else if ((mode & 3) == 2) {
+      config.fUseGlobalOffset = RNTupleWriterMPI::kFileLocksSame;
+    }
+    if (config.fUseGlobalOffset == RNTupleWriterMPI::kFalse) {
+      fprintf(stderr, "Invalid global offset mode: %d\n", mode);
+      return 1;
     }
     if (rank == kRoot) {
       printf("globalOffset: %d\n", config.fUseGlobalOffset);
