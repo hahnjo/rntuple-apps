@@ -36,18 +36,6 @@ static void CallFsync(const char *filename) {
 }
 
 int main(int argc, char *argv[]) {
-  int provided = -1;
-  MPI_Init_thread(NULL, NULL, MPI_THREAD_MULTIPLE, &provided);
-  if (provided != MPI_THREAD_MULTIPLE) {
-    fprintf(stderr, "MPI_Init_thread provided %d\n", provided);
-    return 1;
-  }
-
-  int rank, size;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &size);
-  static constexpr int kRoot = 0;
-
   if (argc < 2) {
     fprintf(stderr, "Usage: ./random-write-mpi entries <mode> <compression>\n");
     return 1;
@@ -76,6 +64,23 @@ int main(int argc, char *argv[]) {
   if (argc > 3) {
     compression = std::stoi(argv[3]);
   }
+
+  int required = MPI_THREAD_MULTIPLE;
+  // Peek at the mode: for aggregator-less writing, we don't need MPI_THREAD_MULTIPLE.
+  if ((mode & 8) != 0) {
+    required = MPI_THREAD_FUNNELED;
+  }
+  int provided = -1;
+  MPI_Init_thread(NULL, NULL, required, &provided);
+  if (provided < required) {
+    fprintf(stderr, "MPI_Init_thread provided %d\n", provided);
+    return 1;
+  }
+
+  int rank, size;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &size);
+  static constexpr int kRoot = 0;
 
   auto model = RNTupleModel::CreateBare();
   model->MakeField<std::uint64_t>("eventId");
