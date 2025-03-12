@@ -128,8 +128,8 @@ public:
     for (const auto &columnRange : clusterDescriptor.GetColumnRangeIterable()) {
       const auto &pageRange =
           clusterDescriptor.GetPageRange(columnRange.GetPhysicalColumnId());
-      nPages += pageRange.fPageInfos.size();
-      for (const auto &pageInfo : pageRange.fPageInfos) {
+      nPages += pageRange.GetPageInfos().size();
+      for (const auto &pageInfo : pageRange.GetPageInfos()) {
         nBytesWritten += pageInfo.GetLocator().GetNBytesOnStorage();
       }
 
@@ -473,7 +473,7 @@ public:
 
         auto &pageRange = clusterDescriptor.GetPageRange(columnId);
         RPageStorage::SealedPageSequence_t sealedPages;
-        for (const auto &pageInfo : pageRange.fPageInfos) {
+        for (const auto &pageInfo : pageRange.GetPageInfos()) {
           const auto bufferSize =
               pageInfo.GetLocator().GetNBytesOnStorage() +
               pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
@@ -951,10 +951,10 @@ public:
           pageInfo.GetLocator().SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
           pageInfo.SetHasChecksum(pageBuf.fSealedPage.GetHasChecksum());
-          pageRange.fPageInfos.emplace_back(pageInfo);
+          pageRange.GetPageInfos().emplace_back(pageInfo);
           offset += pageBuf.fSealedPage.GetBufferSize();
         }
-        pageRange.fPhysicalColumnId = i;
+        pageRange.SetPhysicalColumnId(i);
         // First element index is left unset.
         int firstElementIndex = 0;
         int compressionSettings = GetWriteOptions().GetCompression();
@@ -1206,11 +1206,11 @@ public:
 
           const auto &pageRange =
               clusterDescriptor.GetPageRange(columnRange.GetPhysicalColumnId());
-          if (pageRange.fPageInfos.empty()) {
+          if (pageRange.GetPageInfos().empty()) {
             continue;
           }
 
-          const auto &firstPage = pageRange.fPageInfos.front();
+          const auto &firstPage = pageRange.GetPageInfos().front();
           offsets.push_back(
               firstPage.GetLocator().GetPosition<std::uint64_t>());
           break;

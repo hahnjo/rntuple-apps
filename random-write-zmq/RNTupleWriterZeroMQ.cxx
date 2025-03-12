@@ -389,7 +389,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
       auto &pageRange = clusterDescriptor.GetPageRange(columnId);
       RPageStorage::SealedPageSequence_t sealedPages;
-      for (const auto &pageInfo : pageRange.fPageInfos) {
+      for (const auto &pageInfo : pageRange.GetPageInfos()) {
         const auto bufferSize =
             pageInfo.GetLocator().GetNBytesOnStorage() +
             pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
@@ -661,9 +661,9 @@ public:
               pageBuf.fSealedPage.GetDataSize());
           pageInfo.SetHasChecksum(pageBuf.fSealedPage.GetHasChecksum());
           sumSealedPages += pageBuf.fSealedPage.GetBufferSize();
-          pageRange.fPageInfos.emplace_back(pageInfo);
+          pageRange.GetPageInfos().emplace_back(pageInfo);
         }
-        pageRange.fPhysicalColumnId = i;
+        pageRange.SetPhysicalColumnId(i);
         // First element index is left unset.
         int firstElementIndex = 0;
         int compressionSettings = GetWriteOptions().GetCompression();
