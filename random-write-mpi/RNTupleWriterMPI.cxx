@@ -584,8 +584,10 @@ class RPageSinkMPI final : public RPageSink {
     RNTupleAtomicCounter &fSzWritePayload;
     RNTupleAtomicCounter &fTimeWallWrite;
     RNTupleAtomicCounter &fTimeWallCommAggregator;
+    RNTupleAtomicCounter &fTimeWallGlobalOffset;
     RNTupleTickCounter<RNTupleAtomicCounter> &fTimeCpuWrite;
     RNTupleTickCounter<RNTupleAtomicCounter> &fTimeCpuCommAggregator;
+    RNTupleTickCounter<RNTupleAtomicCounter> &fTimeCpuGlobalOffset;
   };
   std::unique_ptr<RCounters> fCounters;
 
@@ -625,11 +627,17 @@ public:
         *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
             "timeWallCommAggregator", "ns",
             "wall clock time spent communicating with the aggregator"),
+        *fMetrics.MakeCounter<RNTupleAtomicCounter *>(
+            "timeWallGlobalOffset", "ns",
+            "wall clock time spent maintaining the global offset"),
         *fMetrics.MakeCounter<RNTupleTickCounter<RNTupleAtomicCounter> *>(
             "timeCpuWrite", "ns", "CPU time spent writing"),
         *fMetrics.MakeCounter<RNTupleTickCounter<RNTupleAtomicCounter> *>(
             "timeCpuCommAggregator", "ns",
-            "CPU time spent communicating with the aggregator")});
+            "CPU time spent communicating with the aggregator"),
+        *fMetrics.MakeCounter<RNTupleTickCounter<RNTupleAtomicCounter> *>(
+            "timeCpuGlobalOffset", "ns",
+            "CPU time spent maintaining the global offset")});
 
     MPI_Comm_dup(comm, &fComm);
 
@@ -781,6 +789,9 @@ public:
   }
 
   std::uint64_t GetAndIncrementOffset(std::uint64_t size) {
+    RNTupleAtomicTimer timer(fCounters->fTimeWallGlobalOffset,
+                             fCounters->fTimeCpuGlobalOffset);
+
     assert(fUseGlobalOffset);
     std::uint64_t offset;
     if (fUseGlobalOffset == RNTupleWriterMPI::kOneSidedCommunication) {

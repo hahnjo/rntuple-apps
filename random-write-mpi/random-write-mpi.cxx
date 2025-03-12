@@ -97,6 +97,7 @@ int main(int argc, char *argv[]) {
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
   bool sendData = false;
+  bool useGlobalOffset = false;
   if ((mode & 8) == 0) {
     sendData = (mode & 3) == 0;
     config.fSendData = sendData;
@@ -109,6 +110,7 @@ int main(int argc, char *argv[]) {
     }
   } else {
     config.fSendData = false;
+    useGlobalOffset = true;
     if ((mode & 3) == 0) {
       config.fUseGlobalOffset = RNTupleWriterMPI::kOneSidedCommunication;
     } else if ((mode & 3) == 1) {
@@ -201,12 +203,26 @@ int main(int argc, char *argv[]) {
           .GetCounter("RNTupleWriter.RPageSinkBuf.timeWallCriticalSection")
           ->GetValueAsInt() /
       1e9;
-  auto wallCommAggregator =
-      writer->GetMetrics()
-          .GetCounter(
-              "RNTupleWriter.RPageSinkBuf.RPageSinkMPI.timeWallCommAggregator")
-          ->GetValueAsInt() /
-      1e9;
+  char communicating[100] = {0};
+  if (!useGlobalOffset) {
+    auto wallCommAggregator =
+        writer->GetMetrics()
+            .GetCounter("RNTupleWriter.RPageSinkBuf.RPageSinkMPI."
+                        "timeWallCommAggregator")
+            ->GetValueAsInt() /
+        1e9;
+    sprintf(&communicating[0], "communicating: %f s (fraction c = %f)",
+            wallCommAggregator, wallCommAggregator / rankDuration.count());
+  } else {
+    auto wallGlobalOffset =
+        writer->GetMetrics()
+            .GetCounter(
+                "RNTupleWriter.RPageSinkBuf.RPageSinkMPI.timeWallGlobalOffset")
+            ->GetValueAsInt() /
+        1e9;
+    sprintf(&communicating[0], "global offset: %f s (fraction c = %f)",
+            wallGlobalOffset, wallGlobalOffset / rankDuration.count());
+  }
   char writing[100] = {0};
   if (!sendData) {
     auto wallWrite =
@@ -216,10 +232,10 @@ int main(int argc, char *argv[]) {
         1e9;
     sprintf(&writing[0], ", writing: %f s", wallWrite);
   }
-  printf("rank #%d: total: %f s, zipping: %f, in critical section: %f s,"
-         " communicating: %f s (fraction c = %f)%s\n",
-         rank, rankDuration.count(), wallZip, wallCS, wallCommAggregator,
-         wallCommAggregator / rankDuration.count(), &writing[0]);
+  printf(
+      "rank #%d: total: %f s, zipping: %f, in critical section: %f s, %s%s\n",
+      rank, rankDuration.count(), wallZip, wallCS, &communicating[0],
+      &writing[0]);
 
   // Commit the dataset to make sure all data is written.
   writer->CommitDataset();
