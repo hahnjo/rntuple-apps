@@ -364,6 +364,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
       ptr = static_cast<unsigned char *>(msgBuffer) + envelopeSize;
     }
+    std::uint64_t offset = 0;
 
     // Rebuild the list of sealed pages. If the client sent the data, they will
     // point into the message buffer. Otherwise, the buffer will be the nullptr
@@ -395,6 +396,8 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
             pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
         sealedPages.emplace_back(ptr, bufferSize, pageInfo.GetNElements(),
                                  pageInfo.HasChecksum());
+        assert(pageInfo.GetLocator().GetPosition<std::uint64_t>() == offset);
+        offset += bufferSize;
         if (ptr) {
           ptr += bufferSize;
         }
@@ -656,7 +659,8 @@ public:
         for (auto &pageBuf : columnBuf.fPages) {
           RClusterDescriptor::RPageRange::RPageInfo pageInfo;
           pageInfo.SetNElements(pageBuf.fSealedPage.GetNElements());
-          // For the locator, we only set the (compressed) size.
+          // sumSealedPages also serves as the offset into the cluster RBlob.
+          pageInfo.GetLocator().SetPosition(sumSealedPages);
           pageInfo.GetLocator().SetNBytesOnStorage(
               pageBuf.fSealedPage.GetDataSize());
           pageInfo.SetHasChecksum(pageBuf.fSealedPage.GetHasChecksum());

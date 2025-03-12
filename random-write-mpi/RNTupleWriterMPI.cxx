@@ -448,6 +448,7 @@ public:
 
         ptr = buf.get() + envelopeSize;
       }
+      std::uint64_t offset = 0;
 
       // Rebuild the list of sealed pages. If the process sent the data, they
       // will point into the message buffer. Otherwise, the buffer will be the
@@ -479,6 +480,8 @@ public:
               pageInfo.HasChecksum() * RPageStorage::kNBytesPageChecksum;
           sealedPages.emplace_back(ptr, bufferSize, pageInfo.GetNElements(),
                                    pageInfo.HasChecksum());
+          assert(pageInfo.GetLocator().GetPosition<std::uint64_t>() == offset);
+          offset += bufferSize;
           if (ptr) {
             ptr += bufferSize;
           }
