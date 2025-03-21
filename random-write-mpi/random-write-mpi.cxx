@@ -286,6 +286,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Synchronize all ranks to work around timeout issues in MPI_Finalize.
+  MPI_Barrier(MPI_COMM_WORLD);
+
   MPI_Finalize();
 
   return 0;
