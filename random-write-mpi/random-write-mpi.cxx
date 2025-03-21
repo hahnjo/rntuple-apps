@@ -129,6 +129,7 @@ int main(int argc, char *argv[]) {
   if (rank == kRoot) {
     printf("Direct I/O: %d, compression: %u\n\n",
            config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression());
+    fflush(stdout);
   }
 
   // Prepare the data.
@@ -235,6 +236,7 @@ int main(int argc, char *argv[]) {
       "rank #%d: total: %f s, zipping: %f, in critical section: %f s, %s%s\n",
       rank, rankDuration.count(), wallZip, wallCS, &communicating[0],
       &writing[0]);
+  fflush(stdout);
 
   // Commit the dataset to make sure all data is written.
   writer->CommitDataset();
