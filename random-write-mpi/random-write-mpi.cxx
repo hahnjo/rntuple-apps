@@ -22,7 +22,6 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 using ROOT::Experimental::RNTupleModel;
