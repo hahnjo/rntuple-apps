@@ -241,7 +241,7 @@ int main(int argc, char *argv[]) {
     sprintf(&writing[0], ", writing: %f s", wallWrite);
   }
   printf(
-      "rank #%d: total: %f s, zipping: %f, in critical section: %f s, %s%s\n",
+      "rank #%d: total: %f s, zipping: %f s, in critical section: %f s, %s%s\n",
       rank, rankDuration.count(), wallZip, wallCS, &communicating[0],
       &writing[0]);
   fflush(stdout);
