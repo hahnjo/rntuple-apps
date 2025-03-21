@@ -36,7 +36,9 @@ static void CallFsync(const char *filename) {
 
 int main(int argc, char *argv[]) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: ./random-write-mpi entries <mode> <compression>\n");
+    fprintf(
+        stderr,
+        "Usage: ./random-write-mpi entries <mode> <compression> <alignment>\n");
     return 1;
   }
 
@@ -62,6 +64,10 @@ int main(int argc, char *argv[]) {
   int compression = ROOT::RCompressionSetting::EDefaults::kUseGeneralPurpose;
   if (argc > 3) {
     compression = std::stoi(argv[3]);
+  }
+  std::size_t writeAlignment = 4096;
+  if (argc > 4) {
+    writeAlignment = std::stoi(argv[4]);
   }
 
   int required = MPI_THREAD_MULTIPLE;
@@ -95,6 +101,7 @@ int main(int argc, char *argv[]) {
     config.fOptions.SetUseDirectIO(true);
   }
   config.fOptions.SetMaxUnzippedPageSize(128 * 1024);
+  config.fWriteAlignment = writeAlignment;
   bool sendData = false;
   bool useGlobalOffset = false;
   if ((mode & 8) == 0) {
@@ -127,8 +134,9 @@ int main(int argc, char *argv[]) {
   }
 
   if (rank == kRoot) {
-    printf("Direct I/O: %d, compression: %u\n\n",
-           config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression());
+    printf("Direct I/O: %d, compression: %u, write alignment: %zu\n\n",
+           config.fOptions.GetUseDirectIO(), config.fOptions.GetCompression(),
+           writeAlignment);
     fflush(stdout);
   }
 

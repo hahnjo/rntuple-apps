@@ -26,10 +26,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-/// The alignment for write boundaries between allocator and MPI processes.
-/// Because it is used as the write buffer size on the allocator, it must be a
-/// multiple of 4096 (see RNTupleWriteOptions).
-static constexpr std::size_t kAggregatorWriteAlignment = 4096;
 static constexpr std::size_t kProcessWriteBufferSize = 4 * 1024 * 1024;
 
 /// Tags for MPI communication with the aggregator.
@@ -82,6 +78,8 @@ class RPageSinkMPIAggregator final : public RPagePersistentSink {
   std::uint64_t fCurrentOffset = 0;
   /// The key buffer when sending to the processes.
   unsigned char fKeyBuffer[kBlobKeyLen];
+  /// The alignment for write boundaries between processes.
+  std::size_t fWriteAlignment;
   /// Whether the processes are expected to send the payload data.
   bool fProcessesSendData;
   /// Whether to send the key to the processes instead of writing.
@@ -90,6 +88,7 @@ class RPageSinkMPIAggregator final : public RPagePersistentSink {
 public:
   RPageSinkMPIAggregator(const RNTupleWriterMPI::Config &config)
       : RPagePersistentSink(config.fNTupleName, config.fOptions),
+        fWriteAlignment(config.fWriteAlignment),
         fProcessesSendData(config.fSendData), fSendKey(config.fSendKey) {
     EnableDefaultMetrics("Aggregator");
     // No support for merging pages at the moment
@@ -100,7 +99,7 @@ public:
     // TODO: This is pessimistic for writing the header and footer...
     ROOT::RNTupleWriteOptions options = config.fOptions;
     if (!fProcessesSendData) {
-      options.SetWriteBufferSize(kAggregatorWriteAlignment);
+      options.SetWriteBufferSize(fWriteAlignment);
     }
 
     fWriter = RNTupleFileWriter::Recreate(
@@ -161,22 +160,19 @@ public:
     auto offset =
         fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
     fCurrentOffset = offset + szZipHeader;
-    if (!fProcessesSendData &&
-        fCurrentOffset % kAggregatorWriteAlignment != 0) {
+    if (!fProcessesSendData && fCurrentOffset % fWriteAlignment != 0) {
       // Insert a dummy blob to make the offset aligned. For this, we need at
       // least kBlobKeyLen bytes to write the key.
       auto dummyOffset = fCurrentOffset + kBlobKeyLen;
       std::size_t bytes = 0;
-      if (dummyOffset % kAggregatorWriteAlignment != 0) {
-        bytes =
-            kAggregatorWriteAlignment - dummyOffset % kAggregatorWriteAlignment;
+      if (dummyOffset % fWriteAlignment != 0) {
+        bytes = fWriteAlignment - dummyOffset % fWriteAlignment;
       }
       offset = fWriter->ReserveBlob(bytes, 0);
       R__ASSERT(offset == dummyOffset);
       fCurrentOffset = offset + bytes;
     }
-    R__ASSERT(fProcessesSendData ||
-              fCurrentOffset % kAggregatorWriteAlignment == 0);
+    R__ASSERT(fProcessesSendData || fCurrentOffset % fWriteAlignment == 0);
   };
 
   RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
@@ -233,24 +229,22 @@ public:
       if (!fProcessesSendData) {
         // If the processes write the data directly, we need to pad the reserved
         // buffer accordingly to avoid overlapping writes.
-        R__ASSERT(fCurrentOffset % kAggregatorWriteAlignment == 0);
+        R__ASSERT(fCurrentOffset % fWriteAlignment == 0);
         if (!fSendKey) {
           // For the key header, we know that the current offset is aligned and
           // we need to pad until the next alignment boundary.
-          padding = kAggregatorWriteAlignment - kBlobKeyLen;
+          padding = fWriteAlignment - kBlobKeyLen;
           // For the end of the buffer, we again need to pad until the next
           // alignment boundary.
-          if (sumSealedPages % kAggregatorWriteAlignment != 0) {
-            padding += kAggregatorWriteAlignment -
-                       sumSealedPages % kAggregatorWriteAlignment;
+          if (sumSealedPages % fWriteAlignment != 0) {
+            padding += fWriteAlignment - sumSealedPages % fWriteAlignment;
           }
         } else {
           // If the processes also write the key, need to factor this in.
           auto totalSize = kBlobKeyLen + sumSealedPages;
           // Then we need to pad until the next alignment boundary.
-          if (totalSize % kAggregatorWriteAlignment != 0) {
-            padding += kAggregatorWriteAlignment -
-                       totalSize % kAggregatorWriteAlignment;
+          if (totalSize % fWriteAlignment != 0) {
+            padding += fWriteAlignment - totalSize % fWriteAlignment;
           }
         }
       }
@@ -262,13 +256,12 @@ public:
                                                   sumBytesPacked, keyBuffer);
       R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
       fCurrentOffset = offset + sumSealedPages + padding;
-      R__ASSERT(fProcessesSendData ||
-                fCurrentOffset % kAggregatorWriteAlignment == 0);
+      R__ASSERT(fProcessesSendData || fCurrentOffset % fWriteAlignment == 0);
 
       if (!fProcessesSendData) {
-        R__ASSERT(offset % kAggregatorWriteAlignment == kBlobKeyLen);
+        R__ASSERT(offset % fWriteAlignment == kBlobKeyLen);
         if (!fSendKey) {
-          offset += kAggregatorWriteAlignment - kBlobKeyLen;
+          offset += fWriteAlignment - kBlobKeyLen;
         }
       }
       fLastOffset = offset;
@@ -597,6 +590,8 @@ class RPageSinkMPI final : public RPageSink {
   int fFileDes = -1;
   /// A scratch area to buffer writes to the file.
   unsigned char *fBlock = nullptr;
+  /// The alignment for write boundaries between processes.
+  std::size_t fWriteAlignment = 4096;
   /// Whether to send the payload data via MPI.
   bool fSendData;
   /// Whether the aggregator sends the key.
@@ -613,6 +608,7 @@ public:
   RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
         fStorage(config.fStorage), fSendData(config.fSendData),
+        fWriteAlignment(config.fWriteAlignment),
         fAggregatorSendsKey(config.fSendKey),
         fReduceRootContention(config.fReduceRootContention),
         fUseGlobalOffset(config.fUseGlobalOffset) {
@@ -642,7 +638,7 @@ public:
     MPI_Comm_dup(comm, &fComm);
 
     if (!fSendData) {
-      std::align_val_t blockAlign{kAggregatorWriteAlignment};
+      std::align_val_t blockAlign{fWriteAlignment};
       fBlock = static_cast<unsigned char *>(
           ::operator new[](kProcessWriteBufferSize, blockAlign));
       memset(fBlock, 0, kProcessWriteBufferSize);
@@ -732,7 +728,7 @@ public:
     assert(fGlobalOffsetFileDes < 0 && "CommitDataset() should be called");
 
     if (fBlock) {
-      std::align_val_t blockAlign{kAggregatorWriteAlignment};
+      std::align_val_t blockAlign{fWriteAlignment};
       ::operator delete[](fBlock, blockAlign);
     }
 
@@ -1053,11 +1049,11 @@ public:
   }
 
   /// Write all sealed page in order. fBlock may already have data before
-  /// offset % kAggregatorWriteAlignment, for example the key header.
+  /// offset % fWriteAlignment, for example the key header.
   void WriteSealedPages(std::uint64_t offset) {
     assert(fFileDes >= 0 && "OpenFile() should be called");
 
-    std::uint64_t blockOffset = offset - offset % kAggregatorWriteAlignment;
+    std::uint64_t blockOffset = offset - offset % fWriteAlignment;
 
     RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
                              fCounters->fTimeCpuWrite);
@@ -1079,7 +1075,7 @@ public:
 
             // Null the buffer contents for good measure.
             memset(fBlock, 0, kProcessWriteBufferSize);
-            posInBlock = offset % kAggregatorWriteAlignment;
+            posInBlock = offset % fWriteAlignment;
             blockOffset = offset - posInBlock;
           }
 
@@ -1098,10 +1094,9 @@ public:
     // Flush the buffer if any data left.
     if (offset > blockOffset) {
       std::size_t lastBlockSize = offset - blockOffset;
-      // Round up to a multiple of kAggregatorWriteAlignment.
-      lastBlockSize += kAggregatorWriteAlignment - 1;
-      lastBlockSize = (lastBlockSize / kAggregatorWriteAlignment) *
-                      kAggregatorWriteAlignment;
+      // Round up to a multiple of fWriteAlignment.
+      lastBlockSize += fWriteAlignment - 1;
+      lastBlockSize = (lastBlockSize / fWriteAlignment) * fWriteAlignment;
       std::size_t retval = pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
       if (retval != lastBlockSize)
         throw ROOT::RException(
@@ -1119,12 +1114,11 @@ public:
     if (fUseGlobalOffset) {
       auto totalSize = kBlobKeyLen + fSumSealedPages;
       std::uint64_t padding = 0;
-      if (totalSize % kAggregatorWriteAlignment != 0) {
-        padding +=
-            kAggregatorWriteAlignment - totalSize % kAggregatorWriteAlignment;
+      if (totalSize % fWriteAlignment != 0) {
+        padding += fWriteAlignment - totalSize % fWriteAlignment;
       }
       offset = GetAndIncrementOffset(totalSize + padding);
-      R__ASSERT(offset % kAggregatorWriteAlignment == 0);
+      R__ASSERT(offset % fWriteAlignment == 0);
 
       // Write the key by prepending it into the fBlock buffer.
       RNTupleFileWriter::PrepareBlobKey(offset, fSumSealedPages + padding,
@@ -1178,9 +1172,9 @@ public:
         RNTupleSerializer::DeserializeUInt64(&recvBuf[0], offset);
 
         if (!fAggregatorSendsKey) {
-          assert(offset % kAggregatorWriteAlignment == 0);
+          assert(offset % fWriteAlignment == 0);
         } else {
-          assert(offset % kAggregatorWriteAlignment == kBlobKeyLen);
+          assert(offset % fWriteAlignment == kBlobKeyLen);
           // If the aggregator sent the key, write it now.
           static_assert(kBlobKeyLen < kProcessWriteBufferSize);
           memcpy(fBlock, &recvBuf[sizeof(std::uint64_t)], kBlobKeyLen);
@@ -1414,6 +1408,10 @@ RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
   MPI_Initialized(&flag);
   if (!flag) {
     throw ROOT::RException(R__FAIL("MPI library was not initialized"));
+  }
+
+  if (config.fWriteAlignment % 4096 != 0) {
+    throw ROOT::RException(R__FAIL("write alignment must be multiple of 4096"));
   }
 
   if (!config.fUseGlobalOffset) {

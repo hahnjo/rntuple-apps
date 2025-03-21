@@ -39,6 +39,10 @@ public:
     std::string_view fStorage;
     /// Options for writing the ntuple.
     ROOT::RNTupleWriteOptions fOptions;
+    /// The alignment for write boundaries between processes. Because it is used
+    /// as the write buffer size on the allocator, it must be a multiple of 4096
+    /// (see RNTupleWriteOptions).
+    std::size_t fWriteAlignment = 4096;
     /// Whether to send the payload data via MPI. If not, processes only send
     /// the metadata and get back an offset to write the payload data
     /// themselves. This mode is more efficient, but requires that all processes
