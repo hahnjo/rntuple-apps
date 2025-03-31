@@ -776,7 +776,7 @@ public:
     std::string offsetStorage = GetOffsetStorage();
     int flags = O_RDWR;
     if (create) {
-      flags |= O_CREAT | O_TRUNC;
+      flags |= O_CREAT | O_EXCL;
     }
     fGlobalOffsetFileDes = open(offsetStorage.c_str(), flags, 0666);
     if (fGlobalOffsetFileDes < 0) {
