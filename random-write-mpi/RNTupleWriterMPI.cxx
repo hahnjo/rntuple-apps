@@ -706,12 +706,14 @@ public:
           // at a fixed position.
           OpenFile();
           OpenGlobalOffsetFile(true);
-          const GlobalOffsetType offset = fAggregator->GetCurrentOffset();
-          ssize_t written = pwrite(fGlobalOffsetFileDes, &offset,
-                                   sizeof(offset), kGlobalOffsetOff);
-          if (written != sizeof(offset)) {
-            throw ROOT::RException(R__FAIL("pwrite() failed"));
-          }
+          RunUnderLockedOffsetFile([this] {
+            const GlobalOffsetType offset = fAggregator->GetCurrentOffset();
+            ssize_t written = pwrite(fGlobalOffsetFileDes, &offset,
+                                     sizeof(offset), kGlobalOffsetOff);
+            if (written != sizeof(offset)) {
+              throw ROOT::RException(R__FAIL("pwrite() failed"));
+            }
+          });
         }
       }
       MPI_Barrier(fComm);
