@@ -34,6 +34,8 @@ static constexpr int kTagOffset = 2;
 
 /// Offset in the file to store the global offset (at the beginning by default).
 static constexpr off_t kGlobalOffsetOff = 0;
+using GlobalOffsetType = std::uint64_t;
+static constexpr MPI_Datatype kGlobalOffsetDatatype = MPI_UINT64_T;
 
 namespace {
 
@@ -703,7 +705,7 @@ public:
           // at a fixed position.
           OpenFile();
           OpenGlobalOffsetFile(true);
-          const std::uint64_t offset = fAggregator->GetCurrentOffset();
+          const GlobalOffsetType offset = fAggregator->GetCurrentOffset();
           ssize_t written = pwrite(fGlobalOffsetFileDes, &offset,
                                    sizeof(offset), kGlobalOffsetOff);
           if (written != sizeof(offset)) {
@@ -789,12 +791,12 @@ public:
                              fCounters->fTimeCpuGlobalOffset);
 
     assert(fUseGlobalOffset);
-    std::uint64_t offset;
+    GlobalOffsetType offset;
     if (fUseGlobalOffset == RNTupleWriterMPI::kOneSidedCommunication) {
       assert(fOffsetWindow != MPI_WIN_NULL);
 
       MPI_Win_lock(MPI_LOCK_EXCLUSIVE, fRoot, /*assert=*/0, fOffsetWindow);
-      MPI_Fetch_and_op(&size, &offset, MPI_UINT64_T, fRoot, 0, MPI_SUM,
+      MPI_Fetch_and_op(&size, &offset, kGlobalOffsetDatatype, fRoot, 0, MPI_SUM,
                        fOffsetWindow);
       MPI_Win_unlock(fRoot, fOffsetWindow);
     } else {
@@ -820,7 +822,7 @@ public:
         throw ROOT::RException(
             R__FAIL(std::string("read failed: ") + strerror(errno)));
       }
-      const std::uint64_t update = offset + size;
+      const GlobalOffsetType update = offset + size;
       ssize_t written = pwrite(fGlobalOffsetFileDes, &update, sizeof(update),
                                kGlobalOffsetOff);
       if (written != sizeof(update)) {
