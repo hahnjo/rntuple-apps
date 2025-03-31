@@ -836,15 +836,13 @@ public:
         ssize_t read = pread(fGlobalOffsetFileDes, &offset, sizeof(offset),
                              kGlobalOffsetOff);
         if (read != sizeof(offset)) {
-          throw ROOT::RException(
-              R__FAIL(std::string("read failed: ") + strerror(errno)));
+          throw ROOT::RException(R__FAIL("pread() failed"));
         }
         const GlobalOffsetType update = offset + size;
         ssize_t written = pwrite(fGlobalOffsetFileDes, &update, sizeof(update),
                                  kGlobalOffsetOff);
         if (written != sizeof(update)) {
-          throw ROOT::RException(
-              R__FAIL(std::string("write failed: ") + strerror(errno)));
+          throw ROOT::RException(R__FAIL("pwrite() failed"));
         }
       });
     }
@@ -1083,8 +1081,7 @@ public:
             std::size_t retval =
                 pwrite(fFileDes, fBlock, kProcessWriteBufferSize, blockOffset);
             if (retval != kProcessWriteBufferSize)
-              throw ROOT::RException(
-                  R__FAIL(std::string("write failed: ") + strerror(errno)));
+              throw ROOT::RException(R__FAIL("pwrite() failed"));
 
             // Null the buffer contents for good measure.
             memset(fBlock, 0, kProcessWriteBufferSize);
@@ -1112,8 +1109,7 @@ public:
       lastBlockSize = (lastBlockSize / fWriteAlignment) * fWriteAlignment;
       std::size_t retval = pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
       if (retval != lastBlockSize)
-        throw ROOT::RException(
-            R__FAIL(std::string("write failed: ") + strerror(errno)));
+        throw ROOT::RException(R__FAIL("pwrite() failed"));
 
       // Null the buffer contents for good measure.
       memset(fBlock, 0, kProcessWriteBufferSize);

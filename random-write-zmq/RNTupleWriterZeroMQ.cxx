@@ -764,8 +764,7 @@ public:
               std::size_t retval =
                   pwrite(fFileDes, fBlock, kClientWriteBufferSize, blockOffset);
               if (retval != kClientWriteBufferSize)
-                throw ROOT::RException(
-                    R__FAIL(std::string("write failed: ") + strerror(errno)));
+                throw ROOT::RException(R__FAIL("pwrite() failed"));
 
               // Null the buffer contents for good measure.
               memset(fBlock, 0, kClientWriteBufferSize);
@@ -795,8 +794,7 @@ public:
         std::size_t retval =
             pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
         if (retval != lastBlockSize)
-          throw ROOT::RException(
-              R__FAIL(std::string("write failed: ") + strerror(errno)));
+          throw ROOT::RException(R__FAIL("pwrite() failed"));
 
         // Null the buffer contents for good measure.
         memset(fBlock, 0, kClientWriteBufferSize);
