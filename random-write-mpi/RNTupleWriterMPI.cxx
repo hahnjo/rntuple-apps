@@ -17,6 +17,7 @@
 #include <mpi.h>
 
 #include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -786,6 +787,31 @@ public:
     }
   }
 
+  void RunUnderLockedOffsetFile(std::function<void(void)> fn) {
+    assert(fGlobalOffsetFileDes >= 0);
+
+    // Lock the file.
+    struct flock fl;
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    fl.l_start = kGlobalOffsetOff;
+    fl.l_len = sizeof(GlobalOffsetType);
+    fl.l_pid = getpid();
+    if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
+      throw ROOT::RException(
+          R__FAIL(std::string("lock failed: ") + strerror(errno)));
+    }
+
+    fn();
+
+    // Release the lock.
+    fl.l_type = F_UNLCK;
+    if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
+      throw ROOT::RException(
+          R__FAIL(std::string("unlock failed: ") + strerror(errno)));
+    }
+  }
+
   std::uint64_t GetAndIncrementOffset(std::uint64_t size) {
     RNTupleAtomicTimer timer(fCounters->fTimeWallGlobalOffset,
                              fCounters->fTimeCpuGlobalOffset);
@@ -804,38 +830,21 @@ public:
              fUseGlobalOffset == RNTupleWriterMPI::kFileLocksSame);
       assert(fGlobalOffsetFileDes >= 0);
 
-      // Increment the counter: lock the whole file
-      struct flock fl;
-      fl.l_type = F_WRLCK;
-      fl.l_whence = SEEK_SET;
-      fl.l_start = kGlobalOffsetOff;
-      fl.l_len = sizeof(offset);
-      fl.l_pid = getpid();
-      if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
-        throw ROOT::RException(
-            R__FAIL(std::string("lock failed: ") + strerror(errno)));
-      }
-
-      ssize_t read = pread(fGlobalOffsetFileDes, &offset, sizeof(offset),
-                           kGlobalOffsetOff);
-      if (read != sizeof(offset)) {
-        throw ROOT::RException(
-            R__FAIL(std::string("read failed: ") + strerror(errno)));
-      }
-      const GlobalOffsetType update = offset + size;
-      ssize_t written = pwrite(fGlobalOffsetFileDes, &update, sizeof(update),
-                               kGlobalOffsetOff);
-      if (written != sizeof(update)) {
-        throw ROOT::RException(
-            R__FAIL(std::string("write failed: ") + strerror(errno)));
-      }
-
-      // Release the lock.
-      fl.l_type = F_UNLCK;
-      if (fcntl(fGlobalOffsetFileDes, F_SETLKW, &fl) == -1) {
-        throw ROOT::RException(
-            R__FAIL(std::string("unlock failed: ") + strerror(errno)));
-      }
+      RunUnderLockedOffsetFile([this, &offset, size] {
+        ssize_t read = pread(fGlobalOffsetFileDes, &offset, sizeof(offset),
+                             kGlobalOffsetOff);
+        if (read != sizeof(offset)) {
+          throw ROOT::RException(
+              R__FAIL(std::string("read failed: ") + strerror(errno)));
+        }
+        const GlobalOffsetType update = offset + size;
+        ssize_t written = pwrite(fGlobalOffsetFileDes, &update, sizeof(update),
+                                 kGlobalOffsetOff);
+        if (written != sizeof(update)) {
+          throw ROOT::RException(
+              R__FAIL(std::string("write failed: ") + strerror(errno)));
+        }
+      });
     }
 
     return offset;
