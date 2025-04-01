@@ -10,9 +10,9 @@
 #include <string_view>
 
 namespace ROOT {
-namespace Experimental {
 class RNTupleModel;
 class RNTupleWriter;
+namespace Experimental {
 namespace Internal {
 class RPageSink;
 } // namespace Internal
@@ -28,7 +28,7 @@ class RNTupleWriterZeroMQ {
 public:
   struct Config {
     /// The model to write the ntuple.
-    std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
+    std::unique_ptr<ROOT::RNTupleModel> fModel;
     /// The ntuple name.
     std::string_view fNTupleName;
     /// Storage path for the ntuple.
@@ -58,7 +58,7 @@ private:
   /// The persistent sink to write the ntuple.
   std::unique_ptr<ROOT::Experimental::Internal::RPageSink> fSink;
   /// The model to write the ntuple; needs to be destructed before fSink.
-  std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
+  std::unique_ptr<ROOT::RNTupleModel> fModel;
 
   ROOT::Experimental::Detail::RNTupleMetrics fMetrics;
   /// Whether the clients are expected to send the payload data.
@@ -87,8 +87,7 @@ public:
   static std::unique_ptr<RNTupleWriterZeroMQ> Recreate(Config config);
 
   /// Create a new RNTupleWriter that sends data to a server.
-  static std::unique_ptr<ROOT::Experimental::RNTupleWriter>
-  CreateWorkerWriter(Config config);
+  static std::unique_ptr<ROOT::RNTupleWriter> CreateWorkerWriter(Config config);
 };
 
 #endif

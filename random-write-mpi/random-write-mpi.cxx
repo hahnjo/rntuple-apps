@@ -24,8 +24,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-using ROOT::Experimental::RNTupleModel;
-
 static void CallFsync(const char *filename) {
   int fd = open(filename, O_RDWR);
   if (fd < 0 || fsync(fd)) {
@@ -87,7 +85,7 @@ int main(int argc, char *argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &size);
   static constexpr int kRoot = 0;
 
-  auto model = RNTupleModel::CreateBare();
+  auto model = ROOT::RNTupleModel::CreateBare();
   model->MakeField<std::uint64_t>("eventId");
   model->MakeField<std::vector<float>>("particles");
 

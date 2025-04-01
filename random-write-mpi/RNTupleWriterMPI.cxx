@@ -42,33 +42,34 @@ namespace {
 
 using ROOT::DescriptorId_t;
 using ROOT::NTupleSize_t;
+using ROOT::RClusterDescriptor;
+using ROOT::RExtraTypeInfoDescriptor;
+using ROOT::RNTupleDescriptor;
 using ROOT::RNTupleLocator;
-using ROOT::Experimental::RClusterDescriptor;
-using ROOT::Experimental::RExtraTypeInfoDescriptor;
-using ROOT::Experimental::RNTupleDescriptor;
-using ROOT::Experimental::RNTupleModel;
+using ROOT::RNTupleModel;
 using ROOT::Experimental::Detail::RNTupleAtomicCounter;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Detail::RNTupleMetrics;
 using ROOT::Experimental::Detail::RNTupleTickCounter;
-using ROOT::Experimental::Internal::GetFieldZeroOfModel;
-using ROOT::Experimental::Internal::GetProjectedFieldsOfModel;
-using ROOT::Experimental::Internal::RClusterDescriptorBuilder;
-using ROOT::Experimental::Internal::RClusterGroupDescriptorBuilder;
-using ROOT::Experimental::Internal::RColumn;
-using ROOT::Experimental::Internal::RColumnDescriptorBuilder;
-using ROOT::Experimental::Internal::RFieldDescriptorBuilder;
-using ROOT::Experimental::Internal::RNTupleDescriptorBuilder;
 using ROOT::Experimental::Internal::RNTupleFileWriter;
-static constexpr auto kBlobKeyLen =
-    ROOT::Experimental::Internal::RNTupleFileWriter::kBlobKeyLen;
-using ROOT::Experimental::Internal::RNTupleModelChangeset;
 using ROOT::Experimental::Internal::RNTupleSerializer;
-using ROOT::Experimental::Internal::RPage;
 using ROOT::Experimental::Internal::RPagePersistentSink;
 using ROOT::Experimental::Internal::RPageSink;
 using ROOT::Experimental::Internal::RPageStorage;
+using ROOT::Internal::GetFieldZeroOfModel;
+using ROOT::Internal::GetProjectedFieldsOfModel;
+using ROOT::Internal::RClusterDescriptorBuilder;
+using ROOT::Internal::RClusterGroupDescriptorBuilder;
+using ROOT::Internal::RColumn;
+using ROOT::Internal::RColumnDescriptorBuilder;
+using ROOT::Internal::RFieldDescriptorBuilder;
 using ROOT::Internal::RNTupleCompressor;
+using ROOT::Internal::RNTupleDescriptorBuilder;
+using ROOT::Internal::RNTupleModelChangeset;
+using ROOT::Internal::RPage;
+
+static constexpr auto kBlobKeyLen =
+    ROOT::Experimental::Internal::RNTupleFileWriter::kBlobKeyLen;
 
 /// A persistent page sink based on RPageSinkFile used by the
 /// RNTupleWriterMPIAggregator class.
@@ -891,7 +892,7 @@ public:
                                       .Unwrap());
       fDescriptorBuilder.AddFieldLink(f.GetParent()->GetOnDiskId(), fieldId);
       f.SetOnDiskId(fieldId);
-      CallConnectPageSinkOnField(f, *this);
+      ROOT::Internal::CallConnectPageSinkOnField(f, *this);
     }
 
     fBufferedColumns.resize(
@@ -1003,7 +1004,7 @@ public:
       } else {
         RClusterDescriptor::RPageRange pageRange;
         for (auto &pageBuf : columnBuf.fPages) {
-          RClusterDescriptor::RPageRange::RPageInfo pageInfo;
+          RClusterDescriptor::RPageInfo pageInfo;
           pageInfo.SetNElements(pageBuf.fSealedPage.GetNElements());
           pageInfo.GetLocator().SetPosition(offset);
           pageInfo.GetLocator().SetNBytesOnStorage(
@@ -1415,7 +1416,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<ROOT::Experimental::RNTupleWriter>
+std::unique_ptr<ROOT::RNTupleWriter>
 RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
   int flag = 0;
   MPI_Initialized(&flag);
@@ -1457,6 +1458,6 @@ RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
         std::move(sink));
   }
 
-  return ROOT::Experimental::Internal::CreateRNTupleWriter(
-      std::move(config.fModel), std::move(sink));
+  return ROOT::Internal::CreateRNTupleWriter(std::move(config.fModel),
+                                             std::move(sink));
 }

@@ -11,10 +11,8 @@
 #include <string_view>
 
 namespace ROOT {
-namespace Experimental {
 class RNTupleModel;
 class RNTupleWriter;
-} // namespace Experimental
 } // namespace ROOT
 
 /// Write RNTuple data collectively from multiple processes using MPI.
@@ -32,7 +30,7 @@ public:
 
   struct Config {
     /// The model to write the ntuple.
-    std::unique_ptr<ROOT::Experimental::RNTupleModel> fModel;
+    std::unique_ptr<ROOT::RNTupleModel> fModel;
     /// The ntuple name.
     std::string_view fNTupleName;
     /// Storage path for the ntuple.
@@ -67,8 +65,8 @@ public:
   ///
   /// This is a collective operation and all processes must pass the same
   /// arguments for comm and root.
-  static std::unique_ptr<ROOT::Experimental::RNTupleWriter>
-  Recreate(Config config, int root, MPI_Comm comm);
+  static std::unique_ptr<ROOT::RNTupleWriter> Recreate(Config config, int root,
+                                                       MPI_Comm comm);
 };
 
 #endif
