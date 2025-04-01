@@ -1064,7 +1064,11 @@ public:
   void WriteSealedPages(std::uint64_t offset) {
     assert(fFileDes >= 0 && "OpenFile() should be called");
 
-    std::uint64_t blockOffset = offset - offset % fWriteAlignment;
+    std::size_t blockAlignment = fWriteAlignment;
+    if (blockAlignment > kProcessWriteBufferSize) {
+      blockAlignment = kProcessWriteBufferSize;
+    }
+    std::uint64_t blockOffset = offset - offset % blockAlignment;
 
     RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
                              fCounters->fTimeCpuWrite);
@@ -1085,7 +1089,7 @@ public:
 
             // Null the buffer contents for good measure.
             memset(fBlock, 0, kProcessWriteBufferSize);
-            posInBlock = offset % fWriteAlignment;
+            posInBlock = offset % blockAlignment;
             blockOffset = offset - posInBlock;
           }
 
@@ -1104,9 +1108,9 @@ public:
     // Flush the buffer if any data left.
     if (offset > blockOffset) {
       std::size_t lastBlockSize = offset - blockOffset;
-      // Round up to a multiple of fWriteAlignment.
-      lastBlockSize += fWriteAlignment - 1;
-      lastBlockSize = (lastBlockSize / fWriteAlignment) * fWriteAlignment;
+      // Round up to a multiple of blockAlignment.
+      lastBlockSize += blockAlignment - 1;
+      lastBlockSize = (lastBlockSize / blockAlignment) * blockAlignment;
       std::size_t retval = pwrite(fFileDes, fBlock, lastBlockSize, blockOffset);
       if (retval != lastBlockSize)
         throw ROOT::RException(R__FAIL("pwrite() failed"));
@@ -1421,6 +1425,10 @@ RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
 
   if (config.fWriteAlignment % 4096 != 0) {
     throw ROOT::RException(R__FAIL("write alignment must be multiple of 4096"));
+  } else if (config.fWriteAlignment > kProcessWriteBufferSize &&
+             config.fWriteAlignment % kProcessWriteBufferSize != 0) {
+    throw ROOT::RException(
+        R__FAIL("write alignment must be multiple of write buffer size"));
   }
 
   if (!config.fUseGlobalOffset) {
