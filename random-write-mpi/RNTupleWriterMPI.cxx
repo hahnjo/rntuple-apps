@@ -36,7 +36,7 @@ static constexpr int kTagOffset = 2;
 /// Offset in the file to store the global offset (at the beginning by default).
 static constexpr off_t kGlobalOffsetOff = 0;
 using GlobalOffsetType = std::uint64_t;
-static constexpr MPI_Datatype kGlobalOffsetDatatype = MPI_UINT64_T;
+static const MPI_Datatype kGlobalOffsetDatatype = MPI_UINT64_T;
 
 namespace {
 
