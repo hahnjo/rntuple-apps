@@ -611,9 +611,8 @@ class RPageSinkMPI final : public RPageSink {
 public:
   RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
-        fStorage(config.fStorage), fSendData(config.fSendData),
-        fWriteAlignment(config.fWriteAlignment),
-        fAggregatorSendsKey(config.fSendKey),
+        fStorage(config.fStorage), fWriteAlignment(config.fWriteAlignment),
+        fSendData(config.fSendData), fAggregatorSendsKey(config.fSendKey),
         fReduceRootContention(config.fReduceRootContention),
         fUseGlobalOffset(config.fUseGlobalOffset) {
     fMetrics = RNTupleMetrics("RPageSinkMPI");
@@ -1122,8 +1121,6 @@ public:
   }
 
   std::uint64_t CommitCluster(NTupleSize_t nNewEntries) final {
-    const auto &descriptor = fDescriptorBuilder.GetDescriptor();
-
     std::uint64_t offset = 0;
     if (fUseGlobalOffset) {
       auto totalSize = kBlobKeyLen + fSumSealedPages;
@@ -1222,7 +1219,7 @@ public:
   }
 
   struct GatheredClusters {
-    std::unique_ptr<int[]> nClusters;
+    std::unique_ptr<unsigned[]> nClusters;
     std::unique_ptr<int[]> pageListsSizes;
     std::unique_ptr<int[]> pageListsDispls;
     std::unique_ptr<unsigned char[]> pageListsBuffer;
@@ -1324,15 +1321,15 @@ public:
                                          physClusterIDs, fSerializationContext);
 
     // Send the number of clusters and the sizes of the page list to the root.
-    int nClustersInt = static_cast<int>(nClusters);
+    unsigned nClustersUnsigned = static_cast<unsigned>(nClusters);
     int szPageListInt = static_cast<int>(szPageList);
     GatheredClusters clusters;
     if (fRank == fRoot) {
-      clusters.nClusters.reset(new int[fSize]);
+      clusters.nClusters.reset(new unsigned[fSize]);
       clusters.pageListsSizes.reset(new int[fSize]);
     }
-    MPI_Gather(&nClustersInt, 1, MPI_INT, clusters.nClusters.get(), 1, MPI_INT,
-               fRoot, fComm);
+    MPI_Gather(&nClustersUnsigned, 1, MPI_UNSIGNED, clusters.nClusters.get(), 1,
+               MPI_UNSIGNED, fRoot, fComm);
     MPI_Gather(&szPageListInt, 1, MPI_INT, clusters.pageListsSizes.get(), 1,
                MPI_INT, fRoot, fComm);
 
