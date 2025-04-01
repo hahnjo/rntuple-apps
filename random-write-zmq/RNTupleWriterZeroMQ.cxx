@@ -28,6 +28,8 @@
 /// (see RNTupleWriteOptions).
 static constexpr std::size_t kServerClientWriteAlignment = 4096;
 static constexpr std::size_t kClientWriteBufferSize = 4 * 1024 * 1024;
+static_assert(kServerClientWriteAlignment % 4096 == 0);
+static_assert(kServerClientWriteAlignment <= kClientWriteBufferSize);
 
 namespace {
 
