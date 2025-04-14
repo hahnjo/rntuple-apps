@@ -12,11 +12,9 @@
 namespace ROOT {
 class RNTupleModel;
 class RNTupleWriter;
-namespace Experimental {
 namespace Internal {
 class RPageSink;
 } // namespace Internal
-} // namespace Experimental
 } // namespace ROOT
 
 /// Write RNTuple data from multiple clients using ZeroMQ
@@ -56,7 +54,7 @@ private:
   void *fSocket;
 
   /// The persistent sink to write the ntuple.
-  std::unique_ptr<ROOT::Experimental::Internal::RPageSink> fSink;
+  std::unique_ptr<ROOT::Internal::RPageSink> fSink;
   /// The model to write the ntuple; needs to be destructed before fSink.
   std::unique_ptr<ROOT::RNTupleModel> fModel;
 

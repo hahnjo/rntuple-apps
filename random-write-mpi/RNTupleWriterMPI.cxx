@@ -51,11 +51,6 @@ using ROOT::Experimental::Detail::RNTupleAtomicCounter;
 using ROOT::Experimental::Detail::RNTupleAtomicTimer;
 using ROOT::Experimental::Detail::RNTupleMetrics;
 using ROOT::Experimental::Detail::RNTupleTickCounter;
-using ROOT::Experimental::Internal::RNTupleFileWriter;
-using ROOT::Experimental::Internal::RNTupleSerializer;
-using ROOT::Experimental::Internal::RPagePersistentSink;
-using ROOT::Experimental::Internal::RPageSink;
-using ROOT::Experimental::Internal::RPageStorage;
 using ROOT::Internal::GetFieldZeroOfModel;
 using ROOT::Internal::GetProjectedFieldsOfModel;
 using ROOT::Internal::RClusterDescriptorBuilder;
@@ -65,11 +60,16 @@ using ROOT::Internal::RColumnDescriptorBuilder;
 using ROOT::Internal::RFieldDescriptorBuilder;
 using ROOT::Internal::RNTupleCompressor;
 using ROOT::Internal::RNTupleDescriptorBuilder;
+using ROOT::Internal::RNTupleFileWriter;
 using ROOT::Internal::RNTupleModelChangeset;
+using ROOT::Internal::RNTupleSerializer;
 using ROOT::Internal::RPage;
+using ROOT::Internal::RPagePersistentSink;
+using ROOT::Internal::RPageSink;
+using ROOT::Internal::RPageStorage;
 
 static constexpr auto kBlobKeyLen =
-    ROOT::Experimental::Internal::RNTupleFileWriter::kBlobKeyLen;
+    ROOT::Internal::RNTupleFileWriter::kBlobKeyLen;
 
 /// A persistent page sink based on RPageSinkFile used by the
 /// RNTupleWriterMPIAggregator class.
@@ -1448,11 +1448,10 @@ RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
     }
   }
 
-  std::unique_ptr<ROOT::Experimental::Internal::RPageSink> sink =
+  std::unique_ptr<ROOT::Internal::RPageSink> sink =
       std::make_unique<RPageSinkMPI>(config, root, comm);
   if (config.fOptions.GetUseBufferedWrite()) {
-    sink = std::make_unique<ROOT::Experimental::Internal::RPageSinkBuf>(
-        std::move(sink));
+    sink = std::make_unique<ROOT::Internal::RPageSinkBuf>(std::move(sink));
   }
 
   return ROOT::Internal::CreateRNTupleWriter(std::move(config.fModel),
