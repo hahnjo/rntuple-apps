@@ -20,9 +20,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
-using ROOT::Experimental::RNTupleWriteOptions;
 
 static void CallFsync(const char *filename) {
   int fd = open(filename, O_RDWR);
@@ -52,11 +50,11 @@ int main(int argc, char *argv[]) {
     compression = std::stoi(argv[4]);
   }
 
-  auto model = RNTupleModel::CreateBare();
+  auto model = ROOT::RNTupleModel::CreateBare();
   model->MakeField<std::uint64_t>("eventId");
   model->MakeField<std::vector<float>>("particles");
 
-  RNTupleWriteOptions options;
+  ROOT::RNTupleWriteOptions options;
   options.SetCompression(compression);
   if (mode == 16) {
     options.SetUseDirectIO(true);

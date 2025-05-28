@@ -11,12 +11,7 @@
 #include <ROOT/TThreadExecutor.hxx>
 #include <TROOT.h>
 
-using ROOT::Experimental::REntry;
-using ROOT::Experimental::RNTupleFillContext;
-using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
-using ROOT::Experimental::RNTupleReader;
-using ROOT::Experimental::RNTupleWriter;
 
 #include "json.hpp"
 using nlohmann::ordered_json;
@@ -40,8 +35,8 @@ static void CallFsync(const char *filename) {
   close(fd);
 }
 
-static std::unique_ptr<RNTupleModel> CreateModel() {
-  auto model = RNTupleModel::CreateBare();
+static std::unique_ptr<ROOT::RNTupleModel> CreateModel() {
+  auto model = ROOT::RNTupleModel::CreateBare();
 
   model->MakeField<ROOT::RVec<std::int32_t>>("Electron_cutBased");
   model->MakeField<ROOT::RVec<float>>("Electron_eta");
@@ -67,9 +62,9 @@ static std::unique_ptr<RNTupleModel> CreateModel() {
 }
 
 static void ProcessInput(const std::string &path,
-                         std::unique_ptr<REntry> &writeEntry,
+                         std::unique_ptr<ROOT::REntry> &writeEntry,
                          std::function<void()> fill) {
-  auto reader = RNTupleReader::Open(CreateModel(), "Events", path);
+  auto reader = ROOT::RNTupleReader::Open(CreateModel(), "Events", path);
   auto readEntry = reader->GetModel().CreateEntry();
 
   // Get pointers to the read values.
@@ -202,11 +197,11 @@ static void WriteOutput(const std::string &process,
   int fillWidth = log10(paths.size()) + 1;
 
   std::mutex m;
-  std::unique_ptr<RNTupleWriter> writer;
+  std::unique_ptr<ROOT::RNTupleWriter> writer;
   std::unique_ptr<ROOT::TBufferMerger> bufferMerger;
   std::unique_ptr<RNTupleParallelWriter> parallelWriter;
   if (mode <= 1) {
-    writer = RNTupleWriter::Recreate(CreateModel(), "Events", filename);
+    writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events", filename);
   } else if (mode == 3) {
     bufferMerger.reset(new ROOT::TBufferMerger(filename.c_str()));
   } else if (mode == 4) {
@@ -241,15 +236,16 @@ static void WriteOutput(const std::string &process,
           filename << process << "." << variation << ".";
           filename << std::setfill('0') << std::setw(fillWidth) << idx;
           filename << ".root";
-          auto writer =
-              RNTupleWriter::Recreate(CreateModel(), "Events", filename.str());
+          auto writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events",
+                                                      filename.str());
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
           writer.reset();
           CallFsync(filename.str().c_str());
         } else if (mode == 3) {
           auto file = bufferMerger->GetFile();
-          auto writer = RNTupleWriter::Append(CreateModel(), "Events", *file);
+          auto writer =
+              ROOT::RNTupleWriter::Append(CreateModel(), "Events", *file);
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() {
             writer->Fill(*entry);
@@ -266,7 +262,8 @@ static void WriteOutput(const std::string &process,
               // also call Write() and thereby trigger merging.
               writer.reset();
               // Create a new writer, appending to the now empty file.
-              writer = RNTupleWriter::Append(CreateModel(), "Events", *file);
+              writer =
+                  ROOT::RNTupleWriter::Append(CreateModel(), "Events", *file);
               // Create a new enty and rewire all values from the old entry.
               auto newEntry = writer->GetModel().CreateBareEntry();
               for (auto &v : ptrs) {

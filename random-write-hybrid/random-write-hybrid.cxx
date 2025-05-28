@@ -20,9 +20,7 @@
 #include <string>
 #include <vector>
 
-using ROOT::Experimental::RNTupleModel;
 using ROOT::Experimental::RNTupleParallelWriter;
-using ROOT::Experimental::RNTupleWriteOptions;
 
 int main(int argc, char *argv[]) {
   int provided = -1;
@@ -55,11 +53,11 @@ int main(int argc, char *argv[]) {
     compression = std::stoi(argv[4]);
   }
 
-  auto model = RNTupleModel::CreateBare();
+  auto model = ROOT::RNTupleModel::CreateBare();
   model->MakeField<std::uint64_t>("eventId");
   model->MakeField<std::vector<float>>("particles");
 
-  RNTupleWriteOptions options;
+  ROOT::RNTupleWriteOptions options;
   options.SetCompression(compression);
   options.SetMaxUnzippedPageSize(128 * 1024);
 
