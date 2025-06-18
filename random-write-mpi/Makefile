@@ -12,12 +12,15 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-default: random-write-mpi
+default: random-write-mpi random-write-mpi-multiple
 
 %.o: %.cxx
 	$(MPI_CXX) $(OPTS) -c $< -o $@ $(ROOT_CFLAGS)
 
-random-write-mpi.o RNTupleWriterMPI.o: RNTupleWriterMPI.hxx
+random-write-mpi.o random-write-mpi-multiple.o RNTupleWriterMPI.o: RNTupleWriterMPI.hxx
 
 random-write-mpi: random-write-mpi.o RNTupleWriterMPI.o
+	$(MPI_CXX) $^ -o $@ -lROOTNTuple $(ROOT_LIBS)
+
+random-write-mpi-multiple: random-write-mpi-multiple.o RNTupleWriterMPI.o
 	$(MPI_CXX) $^ -o $@ -lROOTNTuple $(ROOT_LIBS)

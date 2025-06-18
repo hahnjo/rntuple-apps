@@ -13,6 +13,7 @@
 #include <ROOT/RPageAllocator.hxx>
 #include <ROOT/RPageSinkBuf.hxx>
 #include <ROOT/RPageStorage.hxx>
+#include <TFile.h>
 #include <TVirtualStreamerInfo.h>
 
 #include <mpi.h>
@@ -38,6 +39,8 @@ using GlobalOffsetType = std::uint64_t;
 static const MPI_Datatype kGlobalOffsetDatatype = MPI_UINT64_T;
 
 namespace {
+
+std::mutex gMutex;
 
 using ROOT::DescriptorId_t;
 using ROOT::NTupleSize_t;
@@ -94,7 +97,7 @@ class RPageSinkMPIAggregator final : public RPagePersistentSink {
   ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fInfosOfClassFields;
 
 public:
-  RPageSinkMPIAggregator(const RNTupleWriterMPI::Config &config)
+  RPageSinkMPIAggregator(const RNTupleWriterMPI::Config &config, TFile *file)
       : RPagePersistentSink(config.fNTupleName, config.fOptions),
         fWriteAlignment(config.fWriteAlignment),
         fProcessesSendData(config.fSendData), fSendKey(config.fSendKey) {
@@ -110,9 +113,14 @@ public:
       options.SetWriteBufferSize(fWriteAlignment);
     }
 
-    fWriter = RNTupleFileWriter::Recreate(
-        config.fNTupleName, config.fStorage,
-        RNTupleFileWriter::EContainerFormat::kTFile, options);
+    if (file == nullptr) {
+      fWriter = RNTupleFileWriter::Recreate(
+          config.fNTupleName, config.fStorage,
+          RNTupleFileWriter::EContainerFormat::kTFile, options);
+    } else {
+      fWriter = RNTupleFileWriter::Append(config.fNTupleName, *file,
+                                          options.GetMaxKeySize());
+    }
   }
 
   std::uint64_t GetLastOffset() const { return fLastOffset; }
@@ -165,6 +173,7 @@ public:
     auto szZipHeader = RNTupleCompressor::Zip(
         serializedHeader, length, GetWriteOptions().GetCompression(),
         zipBuffer.get());
+    std::lock_guard lock(gMutex);
     auto offset =
         fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
     fCurrentOffset = offset + szZipHeader;
@@ -263,6 +272,7 @@ public:
 
     std::vector<RNTupleLocator> locators;
     {
+      gMutex.lock();
       RNTupleAtomicTimer timer(fCounters->fTimeWallWrite,
                                fCounters->fTimeCpuWrite);
 
@@ -295,7 +305,12 @@ public:
       }
       std::uint64_t offset = fWriter->ReserveBlob(sumSealedPages + padding,
                                                   sumBytesPacked, keyBuffer);
-      R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
+      if (!fProcessesSendData) {
+        gMutex.unlock();
+      }
+      // Assert is not valid anymore when writing multiple RNTuples into the
+      // same file, which might have changed the offset.
+      // R__ASSERT(offset == fCurrentOffset + kBlobKeyLen);
       fCurrentOffset = offset + sumSealedPages + padding;
       R__ASSERT(fProcessesSendData || fCurrentOffset % fWriteAlignment == 0);
 
@@ -329,6 +344,9 @@ public:
           offset += sealedPage.GetBufferSize();
         }
       }
+      if (fProcessesSendData) {
+        gMutex.unlock();
+      }
     }
 
     fCounters->fNPageCommitted.Add(nPages);
@@ -349,6 +367,7 @@ public:
         serializedPageList, length, GetWriteOptions().GetCompression(),
         bufPageListZip.get());
 
+    std::lock_guard lock(gMutex);
     RNTupleLocator result;
     result.SetNBytesOnStorage(szPageListZip);
     result.SetPosition(
@@ -375,6 +394,7 @@ public:
                                     extraTypeInfo.GetContent())
                                     .Unwrap());
     }
+    std::lock_guard lock(gMutex);
     fWriter->UpdateStreamerInfos(fInfosOfClassFields);
     std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
     auto szFooterZip = RNTupleCompressor::Zip(
@@ -403,10 +423,10 @@ class RNTupleWriterMPIAggregator {
 
 public:
   RNTupleWriterMPIAggregator(const RNTupleWriterMPI::Config &config,
-                             MPI_Comm comm)
+                             TFile *file, MPI_Comm comm)
       : fModel(config.fModel->Clone()), fComm(comm),
         fProcessesSendData(config.fSendData), fSendKey(config.fSendKey) {
-    fSink = std::make_unique<RPageSinkMPIAggregator>(config);
+    fSink = std::make_unique<RPageSinkMPIAggregator>(config, file);
     fModel->Freeze();
     fSink->Init(*fModel);
   }
@@ -628,7 +648,8 @@ class RPageSinkMPI final : public RPageSink {
   int fGlobalOffsetFileDes = -1;
 
 public:
-  RPageSinkMPI(const RNTupleWriterMPI::Config &config, int root, MPI_Comm comm)
+  RPageSinkMPI(const RNTupleWriterMPI::Config &config, TFile *file, int root,
+               MPI_Comm comm)
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
         fStorage(config.fStorage), fWriteAlignment(config.fWriteAlignment),
         fSendData(config.fSendData), fAggregatorSendsKey(config.fSendKey),
@@ -669,7 +690,8 @@ public:
     MPI_Comm_size(fComm, &fSize);
 
     if (fRank == root) {
-      fAggregator = std::make_unique<RNTupleWriterMPIAggregator>(config, fComm);
+      fAggregator =
+          std::make_unique<RNTupleWriterMPIAggregator>(config, file, fComm);
       fMetrics.ObserveMetrics(fAggregator->GetMetrics());
       if (!fUseGlobalOffset) {
         fAggregatorThread =
@@ -1420,10 +1442,7 @@ public:
   }
 };
 
-} // namespace
-
-std::unique_ptr<ROOT::RNTupleWriter>
-RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
+void ValidateConfig(const RNTupleWriterMPI::Config &config) {
   int flag = 0;
   MPI_Initialized(&flag);
   if (!flag) {
@@ -1456,9 +1475,43 @@ RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
           R__FAIL("cannot send data or key with global offset"));
     }
   }
+}
+
+} // namespace
+
+std::unique_ptr<ROOT::RNTupleWriter>
+RNTupleWriterMPI::Recreate(Config config, int root, MPI_Comm comm) {
+  ValidateConfig(config);
 
   std::unique_ptr<ROOT::Internal::RPageSink> sink =
-      std::make_unique<RPageSinkMPI>(config, root, comm);
+      std::make_unique<RPageSinkMPI>(config, /*file=*/nullptr, root, comm);
+  if (config.fOptions.GetUseBufferedWrite()) {
+    sink = std::make_unique<ROOT::Internal::RPageSinkBuf>(std::move(sink));
+  }
+
+  return ROOT::Internal::CreateRNTupleWriter(std::move(config.fModel),
+                                             std::move(sink));
+}
+
+std::unique_ptr<ROOT::RNTupleWriter>
+RNTupleWriterMPI::Append(Config config, TFile *file, int root, MPI_Comm comm) {
+  ValidateConfig(config);
+  if (config.fUseGlobalOffset) {
+    throw ROOT::RException(R__FAIL("cannot use global offset when Appending"));
+  }
+
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+  if (rank == root) {
+    if (file == nullptr) {
+      throw ROOT::RException(R__FAIL("file must not be nullptr on the root"));
+    }
+  } else if (file != nullptr) {
+    throw ROOT::RException(R__FAIL("file must be nullptr except on the root"));
+  }
+
+  std::unique_ptr<ROOT::Internal::RPageSink> sink =
+      std::make_unique<RPageSinkMPI>(config, file, root, comm);
   if (config.fOptions.GetUseBufferedWrite()) {
     sink = std::make_unique<ROOT::Internal::RPageSinkBuf>(std::move(sink));
   }
