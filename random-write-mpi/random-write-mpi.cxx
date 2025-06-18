@@ -46,8 +46,8 @@ int main(int argc, char *argv[]) {
   //   mode & 3 = 0: sending all data to the aggregator
   //   mode & 3 = 1: sending only metadata, payload written by individual
   //                 processes
-  //   mode & 3 = 2: sending only metadata, paylad *and preceeding key* written
-  //                  by individual processes
+  //   mode & 3 = 2: sending only metadata, payload *and preceeding key* written
+  //                 by individual processes
   //
   // mode & 8 = 1: aggregator-less writing using global offset
   //   mode & 3 = 0: one-sided communication
