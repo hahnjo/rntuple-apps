@@ -10,6 +10,8 @@
 #include <memory>
 #include <string_view>
 
+class TFile;
+
 namespace ROOT {
 class RNTupleModel;
 class RNTupleWriter;
@@ -67,6 +69,15 @@ public:
   /// arguments for comm and root.
   static std::unique_ptr<ROOT::RNTupleWriter> Recreate(Config config, int root,
                                                        MPI_Comm comm);
+
+  /// Append to an existing file and return a new RNTupleWriter.
+  ///
+  /// This is a collective operation and all processes must pass the same
+  /// arguments for comm and root. Only the root must pass in a non-nullptr
+  /// file, which must be kept alive but not be used until the RNTupleWriter
+  /// is destructed.
+  static std::unique_ptr<ROOT::RNTupleWriter> Append(Config config, TFile *file,
+                                                     int root, MPI_Comm comm);
 };
 
 #endif
