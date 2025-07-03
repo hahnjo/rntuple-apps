@@ -7,7 +7,7 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-all: benchmark
+all: analyze benchmark
 
 %: %.cxx
 	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
