@@ -31,30 +31,80 @@ struct RNTupleAnalyzer final {
 private:
   struct VisitedField {
     std::size_t fNColumnAppends = 0;
+    std::size_t fNRepetitions = 1;
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
     std::vector<VisitedField> fSubfields;
+
+    bool IsSimple() const {
+      // Assume that a field is simple if it has no subfields. Additionally
+      // require that it has only a single column, which properly treats
+      // std::bitset and std::string as non-simple fields.
+      return fSubfields.empty() && fNColumnAppends == 1;
+    }
+
+    std::uint64_t
+    CountComplexArrayColumnAppends(ROOT::NTupleSize_t globalIndex) {
+      R__ASSERT(fSubfields.size() == 1);
+      auto &itemField = fSubfields[0];
+
+      std::uint64_t columnAppends = 0;
+      for (std::size_t i = 0; i < fNRepetitions; i++) {
+        columnAppends +=
+            itemField.CountColumnAppends(globalIndex * fNRepetitions + i);
+      }
+      return columnAppends;
+    }
+
+    std::uint64_t
+    CountComplexArrayColumnAppends(ROOT::RNTupleLocalIndex localIndex) {
+      R__ASSERT(fSubfields.size() == 1);
+      auto &itemField = fSubfields[0];
+
+      std::uint64_t columnAppends = 0;
+      for (std::size_t i = 0; i < fNRepetitions; i++) {
+        columnAppends += itemField.CountColumnAppends(
+            ROOT::RNTupleLocalIndex(localIndex.GetClusterId(),
+                                    localIndex.GetIndexInCluster() *
+                                        fNRepetitions) +
+            i);
+      }
+      return columnAppends;
+    }
 
     template <typename Index> std::uint64_t CountColumnAppends(Index index) {
       std::uint64_t columnAppends = fNColumnAppends;
 
       if (fCollectionView) {
+        R__ASSERT(fNRepetitions == 1);
         R__ASSERT(fSubfields.size() == 1);
         auto &itemField = fSubfields[0];
-        // Assume the item field is simple if it has no subfields. Additionally
-        // require that it has only a single column, which properly treats
-        // std::bitset and std::string as non-simple fields.
-        const bool isSimpleItemField =
-            (itemField.fSubfields.empty() && itemField.fNColumnAppends == 1);
 
         // For collections, we need to know the range.
         auto range = fCollectionView->GetCollectionRange(index);
         // For simple item fields, ROOT uses AppendV.
-        if (isSimpleItemField && range.size() > 0) {
+        if (itemField.IsSimple() && range.size() > 0) {
           columnAppends++;
         } else {
           for (auto index : range) {
             columnAppends += itemField.CountColumnAppends(index);
           }
+        }
+      } else if (fNRepetitions > 1) {
+        if (!fSubfields.empty()) {
+          // std::array
+          R__ASSERT(fNColumnAppends == 0);
+          R__ASSERT(fSubfields.size() == 1);
+          auto &itemField = fSubfields[0];
+          // For simple item fields, ROOT uses AppendV.
+          if (itemField.IsSimple()) {
+            columnAppends += 1;
+          } else {
+            columnAppends += CountComplexArrayColumnAppends(index);
+          }
+        } else {
+          // std::bitset - curretly not optimized with AppendV.
+          R__ASSERT(fNColumnAppends == 1);
+          columnAppends += fNRepetitions - 1;
         }
       } else {
         for (auto &field : fSubfields) {
@@ -103,9 +153,8 @@ private:
         fNLeafFields++;
         // Assume one append per column; this also works for two columns of
         // std::string.
-        // TODO: Think about handling repetitive fields (std::array,
-        // std::bitset)
         visitedField.fNColumnAppends = field.GetLogicalColumnIds().size();
+        visitedField.fNRepetitions = field.GetNRepetitions();
         break;
       default:
         break;
