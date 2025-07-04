@@ -237,4 +237,6 @@ int main(int argc, char *argv[]) {
   std::cout << "  Counted: " << analyzer.fNColumns << "\n";
 
   std::cout << "# Column Appends: " << analyzer.CountColumnAppends() << "\n";
+
+  return 0;
 }
