@@ -7,7 +7,7 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-all: analyze benchmark skim-PHYSLITE
+all: analyze benchmark serialize skim-PHYSLITE
 
 %: %.cxx
 	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
