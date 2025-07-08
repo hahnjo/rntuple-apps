@@ -1,5 +1,9 @@
 /analyze
 /benchmark
+/cms-Muon
+/libMuon.so
+/Muon.cxx
+/Muon_rdict.pcm
 /parameters.txt
 /serialize
 /skim-PHYSLITE

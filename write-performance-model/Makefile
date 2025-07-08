@@ -7,7 +7,13 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-all: analyze benchmark serialize skim-PHYSLITE
+all: analyze benchmark cms-Muon libMuon.so serialize skim-PHYSLITE
 
 %: %.cxx
 	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
+
+%.cxx: %.hxx %_LinkDef.h
+	rootcling -f $@ $^
+
+libMuon.so: Muon.cxx
+	$(CXX) $(OPTS) -shared -fPIC $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS)
