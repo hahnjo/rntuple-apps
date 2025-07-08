@@ -8,6 +8,7 @@
 #include <ROOT/RNTupleWriter.hxx>
 
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -211,7 +212,8 @@ public:
 
 int main(int argc, char *argv[]) {
   if (argc < 3) {
-    std::cerr << "Usage: ./analyze ntupleName storage" << std::endl;
+    std::cerr << "Usage: ./analyze ntupleName storage <parameters>"
+              << std::endl;
     return 1;
   }
 
@@ -222,7 +224,8 @@ int main(int argc, char *argv[]) {
 
   RNTupleAnalyzer analyzer(ntupleName, storage);
   const auto &descriptor = analyzer.GetDescriptor();
-  std::cout << "# Entries: " << descriptor.GetNEntries() << "\n";
+  ROOT::NTupleSize_t entries = descriptor.GetNEntries();
+  std::cout << "# Entries: " << entries << "\n";
 
   std::cout << "# Bytes: " << analyzer.fNBytes << "\n";
   std::cout << "  On Storage: " << analyzer.fNBytesOnStorage << "\n";
@@ -236,7 +239,75 @@ int main(int argc, char *argv[]) {
   std::cout << "# Columns: " << descriptor.GetNPhysicalColumns() << "\n";
   std::cout << "  Counted: " << analyzer.fNColumns << "\n";
 
-  std::cout << "# Column Appends: " << analyzer.CountColumnAppends() << "\n";
+  std::uint64_t columnAppends = analyzer.CountColumnAppends();
+  std::cout << "# Column Appends: " << columnAppends << "\n";
+
+  if (argc > 3) {
+    std::ifstream parameters(argv[3]);
+    double perByte, perByteErr;
+    parameters >> perByte >> perByteErr;
+    double perRecordField, perRecordFieldErr;
+    parameters >> perRecordField >> perRecordFieldErr;
+    double perCollectionField, perCollectionFieldErr;
+    parameters >> perCollectionField >> perCollectionFieldErr;
+    double perColumn, perColumnErr;
+    parameters >> perColumn >> perColumnErr;
+    double perColumnAppend, perColumnAppendErr;
+    parameters >> perColumnAppend >> perColumnAppendErr;
+
+    static constexpr double UsToSeconds = 1e-6;
+    std::cout << "\n === PERFORMANCE MODEL ===\n";
+
+    double perBytePred = analyzer.fNBytes * perByte * UsToSeconds;
+    double perBytePredErr = analyzer.fNBytes * perByteErr * UsToSeconds;
+    std::cout << "per byte: " << perByte << " us +- " << perByteErr << " us\n";
+    std::cout << " -> prediction: " << perBytePred << " s +- " << perBytePredErr
+              << " s\n";
+
+    double perRecordFieldPred =
+        entries * analyzer.fNRecordFields * perRecordField * UsToSeconds;
+    double perRecordFieldPredErr =
+        entries * analyzer.fNRecordFields * perRecordFieldErr * UsToSeconds;
+    std::cout << "per record field: " << perRecordField << " us +- "
+              << perRecordFieldErr << " us\n";
+    std::cout << " -> prediction: " << perRecordFieldPred << " s +- "
+              << perRecordFieldPredErr << " s\n";
+
+    double perCollectionFieldPred = entries * analyzer.fNCollectionFields *
+                                    perCollectionField * UsToSeconds;
+    double perCollectionFieldPredErr = entries * analyzer.fNCollectionFields *
+                                       perCollectionFieldErr * UsToSeconds;
+    std::cout << "per collection field: " << perCollectionField << " us +- "
+              << perCollectionFieldErr << " us\n";
+    std::cout << " -> prediction: " << perCollectionFieldPred << " s +- "
+              << perCollectionFieldPredErr << " s\n";
+
+    double perColumnPred =
+        entries * analyzer.fNColumns * perColumn * UsToSeconds;
+    double perColumnPredErr =
+        entries * analyzer.fNColumns * perColumnErr * UsToSeconds;
+    std::cout << "per column: " << perColumn << " us +- " << perColumnErr
+              << " us\n";
+    std::cout << " -> prediction: " << perColumnPred << " s +- "
+              << perColumnPredErr << " s\n";
+
+    double perColumnAppendPred = columnAppends * perColumnAppend * UsToSeconds;
+    double perColumnAppendPredErr =
+        columnAppends * perColumnAppendErr * UsToSeconds;
+    std::cout << "per column append: " << perColumnAppend << " us +- "
+              << perColumnAppendErr << " us\n";
+    std::cout << " -> prediction: " << perColumnAppendPred << " s +- "
+              << perColumnAppendPredErr << " s\n";
+
+    double totalPred = perBytePred + perRecordFieldPred +
+                       perCollectionFieldPred + perColumnPred +
+                       perColumnAppendPred;
+    double totalPredErr = perBytePredErr + perRecordFieldPredErr +
+                          perCollectionFieldPredErr + perColumnPredErr +
+                          perColumnAppendPredErr;
+    std::cout << "\n => TOTAL: " << totalPred << " s +- " << totalPredErr
+              << " s\n";
+  }
 
   return 0;
 }
