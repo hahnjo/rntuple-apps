@@ -27,10 +27,10 @@ static constexpr double MeanNumMuons = 3.5;
 static constexpr double MeanNumChamberMatches = 5.6;
 static constexpr double MeanNumSegmentMatches = 0.37;
 
-static double Run() {
+template <typename Container> double Run() {
   auto model = ROOT::RNTupleModel::CreateBare();
   for (std::size_t f = 0; f < NumFields; f++) {
-    model->MakeField<Muons>("f" + std::to_string(f));
+    model->MakeField<Container>("f" + std::to_string(f));
   }
 
   // Create the writer.
@@ -53,7 +53,7 @@ static double Run() {
   std::poisson_distribution<int> poissonSegmentMatches(MeanNumSegmentMatches);
 
   for (std::size_t f = 0; f < NumFields; f++) {
-    auto ptr = entry->GetPtr<Muons>("f" + std::to_string(f));
+    auto ptr = entry->GetPtr<Container>("f" + std::to_string(f));
     int numMuons = poissonMuons(generator);
     ptr->resize(numMuons);
     for (int muon = 0; muon < numMuons; muon++) {
@@ -82,6 +82,24 @@ static double Run() {
   return duration.count();
 }
 
+template <typename Container> void Benchmark() {
+  double sum = 0, sum2 = 0;
+  for (std::size_t r = 0; r < NumRepetitions; r++) {
+    double timing = Run<Container>();
+    std::cout << " " << timing << std::flush;
+    sum += timing;
+    sum2 += timing * timing;
+  }
+  double mean = sum / NumRepetitions;
+  std::cout << "\n -> " << mean << " s";
+  if (NumRepetitions > 1) {
+    double var = (sum2 - sum * sum / NumRepetitions) / (NumRepetitions - 1);
+    double stdev = std::sqrt(var);
+    std::cout << " +- " << stdev << " s";
+  }
+  std::cout << "\n";
+}
+
 int main(int argc, char *argv[]) {
   std::cout << "NumRepetitions: " << NumRepetitions
             << ", NumFields: " << NumFields << ", NumEntries: " << NumEntries
@@ -95,23 +113,16 @@ int main(int argc, char *argv[]) {
 
   gSystem->Load("./libMuon.so");
 
-  std::cout << "Benchmarking..." << std::endl;
-
-  double sum = 0, sum2 = 0;
-  for (std::size_t r = 0; r < NumRepetitions; r++) {
-    double timing = Run();
-    std::cout << " " << timing << std::flush;
-    sum += timing;
-    sum2 += timing * timing;
-  }
-  double mean = sum / NumRepetitions;
-  std::cout << "\n -> " << mean << " s";
-  if (NumRepetitions > 1) {
-    double var = (sum2 - sum * sum / NumRepetitions) / (NumRepetitions - 1);
-    double stdev = std::sqrt(var);
-    std::cout << " +- " << stdev << " s";
-  }
+  std::cout << "Benchmarking (simplified) Muons..." << std::endl;
+  Benchmark<Muons>();
   std::cout << "\n";
+
+  std::cout << "Benchmarking (more complex) PATMuons..." << std::endl;
+  Benchmark<PATMuons>();
+  std::cout << "\n";
+
+  std::cout << "Benchmarking Muons with std::array fields..." << std::endl;
+  Benchmark<ArrayMuons>();
 
   return 0;
 }
