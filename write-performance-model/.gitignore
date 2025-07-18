@@ -1,7 +1,11 @@
 /analyze
+/AoS-SoA.cxx
+/AoS-SoA_rdict.pcm
 /benchmark
 /cms-Muon
+/libAoS-SoA.so
 /libMuon.so
+/measure-AoS-SoA
 /Muon.cxx
 /Muon_rdict.pcm
 /parameters.txt
