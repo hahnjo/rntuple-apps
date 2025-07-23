@@ -8,6 +8,7 @@
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RPageNullSink.hxx>
 #include <TROOT.h>
+#include <TSystem.h>
 
 #include <chrono>
 #include <cmath>
@@ -70,6 +71,8 @@ int main(int argc, char *argv[]) {
 
   // Initialize ROOT before starting any benchmark.
   ROOT::GetROOT();
+
+  gSystem->Load("./libPHYSLITE.so");
 
   // Run read + serialization once to warm up the system.
   ReadAndSerialize(ntupleName, storage);

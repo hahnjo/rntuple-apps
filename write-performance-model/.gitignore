@@ -5,9 +5,12 @@
 /cms-Muon
 /libAoS-SoA.so
 /libMuon.so
+/libPHYSLITE.so
 /measure-AoS-SoA
 /Muon.cxx
 /Muon_rdict.pcm
 /parameters.txt
+/PHYSLITEProjectDict.cxx
+/PHYSLITEProjectDict_rdict.pcm
 /serialize
 /skim-PHYSLITE
