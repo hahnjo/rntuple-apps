@@ -18,17 +18,14 @@
 
 static constexpr std::size_t NumRepetitions = 10;
 
-static double ReadAndSerialize(const char *ntupleName, const char *storage,
+static double ReadAndSerialize(const ROOT::RNTupleModel &model,
+                               const char *ntupleName, const char *storage,
                                bool serialize = true) {
   auto start = std::chrono::steady_clock::now();
 
-  // Create reader and get model.
-  ROOT::RNTupleDescriptor::RCreateModelOptions modelOptions;
-  modelOptions.SetReconstructProjections(true);
-  auto reader = ROOT::RNTupleReader::Open(modelOptions, ntupleName, storage);
-  auto model = reader->GetModel().Clone();
+  // Create reader (with imposed model) and writer to only serialize the data.
+  auto reader = ROOT::RNTupleReader::Open(model.Clone(), ntupleName, storage);
 
-  // Create writer to only serialize the data.
   ROOT::RNTupleWriteOptions options;
   options.SetCompression(0);
   options.SetEnableSamePageMerging(false);
@@ -36,7 +33,7 @@ static double ReadAndSerialize(const char *ntupleName, const char *storage,
   auto sink = std::make_unique<ROOT::Experimental::Internal::RPageNullSink>(
       ntupleName, options);
   auto writer =
-      ROOT::Internal::CreateRNTupleWriter(std::move(model), std::move(sink));
+      ROOT::Internal::CreateRNTupleWriter(model.Clone(), std::move(sink));
 
   // Create entries and link their shared_ptr's.
   auto readerEntry = reader->CreateEntry();
@@ -74,13 +71,41 @@ int main(int argc, char *argv[]) {
 
   gSystem->Load("./libPHYSLITE.so");
 
+  auto model = ROOT::RNTupleModel::CreateBare();
+  {
+    // Open the source file a first time to get the descriptor and create a
+    // suitable model.
+    auto reader = ROOT::RNTupleReader::Open(ntupleName, storage);
+    const auto &descriptor = reader->GetDescriptor();
+    for (const auto &fieldDesc : descriptor.GetTopLevelFields()) {
+      const auto &typeName = fieldDesc.GetTypeName();
+      if (fieldDesc.GetStructure() == ROOT::ENTupleStructure::kCollection) {
+        if (typeName.rfind("std::vector<", 0) == std::string::npos) {
+          // This is very likely a class with an associated collection proxy.
+          // Read and write the data as std::vector of the item field's type.
+          const auto &links = fieldDesc.GetLinkIds();
+          R__ASSERT(links.size() == 1);
+          const auto &itemField = descriptor.GetFieldDescriptor(links[0]);
+          const std::string vectorTypeName =
+              "std::vector<" + itemField.GetTypeName() + ">";
+          auto field = ROOT::RFieldBase::Create(fieldDesc.GetFieldName(),
+                                                vectorTypeName);
+          model->AddField(field.Unwrap());
+          continue;
+        }
+      }
+      model->AddField(fieldDesc.CreateField(descriptor));
+    }
+  }
+
   // Run read + serialization once to warm up the system.
-  ReadAndSerialize(ntupleName, storage);
+  ReadAndSerialize(*model, ntupleName, storage);
 
   std::cout << "Reading \"" << ntupleName << "\"..." << std::endl;
   double sumRead = 0, sum2Read = 0;
   for (std::size_t r = 0; r < NumRepetitions; r++) {
-    double timing = ReadAndSerialize(ntupleName, storage, /*serialize=*/false);
+    double timing =
+        ReadAndSerialize(*model, ntupleName, storage, /*serialize=*/false);
     std::cout << " " << timing << std::flush;
     sumRead += timing;
     sum2Read += timing * timing;
@@ -94,7 +119,8 @@ int main(int argc, char *argv[]) {
   std::cout << "Reading and serializing..." << std::endl;
   double sumReadAndSerialize = 0, sum2ReadAndSerialize = 0;
   for (std::size_t r = 0; r < NumRepetitions; r++) {
-    double timing = ReadAndSerialize(ntupleName, storage, /*serialize=*/true);
+    double timing =
+        ReadAndSerialize(*model, ntupleName, storage, /*serialize=*/true);
     std::cout << " " << timing << std::flush;
     sumReadAndSerialize += timing;
     sum2ReadAndSerialize += timing * timing;
