@@ -20,7 +20,7 @@ public:
 
 public:
 // Data Members.
-   FairMultiLinkedData* fLink;       //
+   std::unique_ptr<FairMultiLinkedData> fLink;       //
 
    FairMultiLinkedData_Interface();
    FairMultiLinkedData_Interface(FairMultiLinkedData_Interface && ) = default;

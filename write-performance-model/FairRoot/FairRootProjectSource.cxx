@@ -193,23 +193,18 @@ FairMultiLinkedData_Interface &FairMultiLinkedData_Interface::operator=(const Fa
    // Use at your own risk!
    (void)rhs; // avoid warning about unused parameter
    TObject::operator=(const_cast<FairMultiLinkedData_Interface &>( rhs ));
-   fLink = (const_cast<FairMultiLinkedData_Interface &>( rhs ).fLink);
-   FairMultiLinkedData_Interface &modrhs = const_cast<FairMultiLinkedData_Interface &>( rhs );
-   modrhs.fLink = 0;
+   fLink = std::move((const_cast<FairMultiLinkedData_Interface &>( rhs ).fLink));
    return *this;
 }
 FairMultiLinkedData_Interface::FairMultiLinkedData_Interface(const FairMultiLinkedData_Interface & rhs)
    : TObject(const_cast<FairMultiLinkedData_Interface &>( rhs ))
-   , fLink(const_cast<FairMultiLinkedData_Interface &>( rhs ).fLink)
+   , fLink(std::move(const_cast<FairMultiLinkedData_Interface &>( rhs ).fLink))
 {
    // This is NOT a copy constructor. This is actually a move constructor (for stl container's sake).
    // Use at your own risk!
    (void)rhs; // avoid warning about unused parameter
-   FairMultiLinkedData_Interface &modrhs = const_cast<FairMultiLinkedData_Interface &>( rhs );
-   modrhs.fLink = 0;
 }
 FairMultiLinkedData_Interface::~FairMultiLinkedData_Interface() {
-   delete fLink;   fLink = 0;
 }
 #endif // FairMultiLinkedData_Interface_cxx
 

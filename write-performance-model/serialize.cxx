@@ -69,6 +69,7 @@ int main(int argc, char *argv[]) {
   // Initialize ROOT before starting any benchmark.
   ROOT::GetROOT();
 
+  gSystem->Load("./libFairRoot.so");
   gSystem->Load("./libPHYSLITE.so");
 
   auto model = ROOT::RNTupleModel::CreateBare();

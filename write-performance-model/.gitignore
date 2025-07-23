@@ -3,7 +3,10 @@
 /AoS-SoA_rdict.pcm
 /benchmark
 /cms-Muon
+/FairRootProjectDict.cxx
+/FairRootProjectDict_rdict.pcm
 /libAoS-SoA.so
+/libFairRoot.so
 /libMuon.so
 /libPHYSLITE.so
 /measure-AoS-SoA
