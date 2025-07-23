@@ -7,7 +7,7 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-all: analyze benchmark cms-Muon libAoS-SoA.so libMuon.so libPHYSLITE.so measure-AoS-SoA serialize skim-PHYSLITE
+all: analyze benchmark cms-Muon libAoS-SoA.so libMuon.so libPHYSLITE.so measure-AoS-SoA serialize
 
 %: %.cxx
 	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
