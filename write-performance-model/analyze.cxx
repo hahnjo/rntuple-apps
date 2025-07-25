@@ -31,9 +31,13 @@ struct RNTupleAnalyzer final {
 
   struct DataCounts {
     std::uint64_t fColumnAppends = 0;
+    std::uint64_t fCollectionAppends = 0;
+    std::uint64_t fEmptyCollectionAppends = 0;
 
     DataCounts &operator+=(const DataCounts &rhs) {
       fColumnAppends += rhs.fColumnAppends;
+      fCollectionAppends += rhs.fCollectionAppends;
+      fEmptyCollectionAppends += rhs.fEmptyCollectionAppends;
       return *this;
     }
   };
@@ -89,6 +93,12 @@ private:
 
         // For collections, we need to know the range.
         auto range = fCollectionView->GetCollectionRange(index);
+
+        counts.fCollectionAppends++;
+        if (range.size() == 0) {
+          counts.fEmptyCollectionAppends++;
+        }
+
         // For simple item fields, ROOT uses AppendV.
         if (itemField.IsSimple() && range.size() > 0) {
           counts.fColumnAppends++;
@@ -249,6 +259,12 @@ int main(int argc, char *argv[]) {
   auto counts = analyzer.CountData();
   std::uint64_t columnAppends = counts.fColumnAppends;
   std::cout << "# Column Appends: " << columnAppends << "\n";
+
+  std::cout << "# Collection Appends: " << counts.fCollectionAppends;
+  std::cout << " (empty: " << counts.fEmptyCollectionAppends << ", ";
+  double percent =
+      100.0 * counts.fEmptyCollectionAppends / counts.fCollectionAppends;
+  std::cout << percent << "%)\n";
 
   if (argc > 3) {
     std::ifstream parameters(argv[3]);
