@@ -29,6 +29,15 @@ struct RNTupleAnalyzer final {
 
   std::size_t fNColumns = 0;
 
+  struct DataCounts {
+    std::uint64_t fColumnAppends = 0;
+
+    DataCounts &operator+=(const DataCounts &rhs) {
+      fColumnAppends += rhs.fColumnAppends;
+      return *this;
+    }
+  };
+
 private:
   struct FieldInfo {
     std::size_t fNColumnAppends = 0;
@@ -43,37 +52,35 @@ private:
       return fSubfields.empty() && fNColumnAppends == 1;
     }
 
-    std::uint64_t
-    CountComplexArrayColumnAppends(ROOT::NTupleSize_t globalIndex) {
+    DataCounts CountComplexArray(ROOT::NTupleSize_t globalIndex) {
       R__ASSERT(fSubfields.size() == 1);
       auto &itemField = fSubfields[0];
 
-      std::uint64_t columnAppends = 0;
+      DataCounts counts;
       for (std::size_t i = 0; i < fNRepetitions; i++) {
-        columnAppends +=
-            itemField.CountColumnAppends(globalIndex * fNRepetitions + i);
+        counts += itemField.CountData(globalIndex * fNRepetitions + i);
       }
-      return columnAppends;
+      return counts;
     }
 
-    std::uint64_t
-    CountComplexArrayColumnAppends(ROOT::RNTupleLocalIndex localIndex) {
+    DataCounts CountComplexArray(ROOT::RNTupleLocalIndex localIndex) {
       R__ASSERT(fSubfields.size() == 1);
       auto &itemField = fSubfields[0];
 
-      std::uint64_t columnAppends = 0;
+      DataCounts counts;
       for (std::size_t i = 0; i < fNRepetitions; i++) {
-        columnAppends += itemField.CountColumnAppends(
+        counts += itemField.CountData(
             ROOT::RNTupleLocalIndex(localIndex.GetClusterId(),
                                     localIndex.GetIndexInCluster() *
                                         fNRepetitions) +
             i);
       }
-      return columnAppends;
+      return counts;
     }
 
-    template <typename Index> std::uint64_t CountColumnAppends(Index index) {
-      std::uint64_t columnAppends = fNColumnAppends;
+    template <typename Index> DataCounts CountData(Index index) {
+      DataCounts counts;
+      counts.fColumnAppends = fNColumnAppends;
 
       if (fCollectionView) {
         R__ASSERT(fNRepetitions == 1);
@@ -84,10 +91,10 @@ private:
         auto range = fCollectionView->GetCollectionRange(index);
         // For simple item fields, ROOT uses AppendV.
         if (itemField.IsSimple() && range.size() > 0) {
-          columnAppends++;
+          counts.fColumnAppends++;
         } else {
           for (auto index : range) {
-            columnAppends += itemField.CountColumnAppends(index);
+            counts += itemField.CountData(index);
           }
         }
       } else if (fNRepetitions > 1) {
@@ -98,22 +105,22 @@ private:
           auto &itemField = fSubfields[0];
           // For simple item fields, ROOT uses AppendV.
           if (itemField.IsSimple()) {
-            columnAppends += 1;
+            counts.fColumnAppends += 1;
           } else {
-            columnAppends += CountComplexArrayColumnAppends(index);
+            counts += CountComplexArray(index);
           }
         } else {
-          // std::bitset - curretly not optimized with AppendV.
+          // std::bitset - currently not optimized with AppendV.
           R__ASSERT(fNColumnAppends == 1);
-          columnAppends += fNRepetitions - 1;
+          counts.fColumnAppends += fNRepetitions - 1;
         }
       } else {
         for (auto &field : fSubfields) {
-          columnAppends += field.CountColumnAppends(index);
+          counts += field.CountData(index);
         }
       }
 
-      return columnAppends;
+      return counts;
     }
   };
   FieldInfo fFieldZero;
@@ -194,15 +201,15 @@ private:
   }
 
 public:
-  std::uint64_t CountColumnAppends() {
-    std::uint64_t columnAppends = 0;
+  DataCounts CountData() {
+    DataCounts counts;
     for (auto index : *fReader) {
-      columnAppends += CountColumnAppends(index);
+      counts += CountData(index);
     }
-    return columnAppends;
+    return counts;
   }
-  std::uint64_t CountColumnAppends(ROOT::NTupleSize_t index) {
-    return fFieldZero.CountColumnAppends(index);
+  DataCounts CountData(ROOT::NTupleSize_t index) {
+    return fFieldZero.CountData(index);
   }
 
   const ROOT::RNTupleDescriptor &GetDescriptor() const {
@@ -239,7 +246,8 @@ int main(int argc, char *argv[]) {
   std::cout << "# Columns: " << descriptor.GetNPhysicalColumns() << "\n";
   std::cout << "  Counted: " << analyzer.fNColumns << "\n";
 
-  std::uint64_t columnAppends = analyzer.CountColumnAppends();
+  auto counts = analyzer.CountData();
+  std::uint64_t columnAppends = counts.fColumnAppends;
   std::cout << "# Column Appends: " << columnAppends << "\n";
 
   if (argc > 3) {
