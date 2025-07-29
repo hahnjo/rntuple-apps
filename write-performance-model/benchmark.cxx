@@ -228,10 +228,18 @@ int main(int argc, char *argv[]) {
   double perRecord64 = (tuple_int64.mean - int64.mean) * ToUsPerFieldPerEntry;
   double perRecord64Error =
       CombineErrors(tuple_int64, int64) * ToUsPerFieldPerEntry;
+  double perRecordVector =
+      (tuple_vector_tuple_int32_2.mean - vector_tuple_int32_2.mean) *
+      ToUsPerFieldPerEntry;
+  double perRecordVectorError =
+      CombineErrors(tuple_vector_tuple_int32_2, vector_tuple_int32_2) *
+      ToUsPerFieldPerEntry;
   std::cout << "  per record field: " << perRecord << " us +- "
-            << perRecordError << " us";
-  std::cout << " (from std::int64_t: " << perRecord64 << " us +- "
-            << perRecord64Error << " us)\n";
+            << perRecordError << " us\n";
+  std::cout << "    from std::int64_t: " << perRecord64 << " us +- "
+            << perRecord64Error << " us\n";
+  std::cout << "    from std::vector<std::tuple<std::int32_t>>: "
+            << perRecordVector << " us +- " << perRecordVectorError << " us\n";
 
   double perVector = (vector_int32_0.mean - int64.mean) * ToUsPerFieldPerEntry;
   double perVectorError =
