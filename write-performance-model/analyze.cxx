@@ -30,11 +30,11 @@ struct RNTupleAnalyzer final {
   std::size_t fNColumns = 0;
 
 private:
-  struct VisitedField {
+  struct FieldInfo {
     std::size_t fNColumnAppends = 0;
     std::size_t fNRepetitions = 1;
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
-    std::vector<VisitedField> fSubfields;
+    std::vector<FieldInfo> fSubfields;
 
     bool IsSimple() const {
       // Assume that a field is simple if it has no subfields. Additionally
@@ -116,7 +116,7 @@ private:
       return columnAppends;
     }
   };
-  VisitedField fFieldZero;
+  FieldInfo fFieldZero;
 
 public:
   RNTupleAnalyzer(std::string_view ntupleName, std::string_view storage) {
@@ -134,10 +134,10 @@ private:
     fFieldZero = VisitField(fReader->GetDescriptor().GetFieldZeroId());
   }
 
-  VisitedField VisitField(ROOT::DescriptorId_t fieldId) {
+  FieldInfo VisitField(ROOT::DescriptorId_t fieldId) {
     const auto &descriptor = GetDescriptor();
     const auto &field = descriptor.GetFieldDescriptor(fieldId);
-    VisitedField visitedField;
+    FieldInfo fieldInfo;
 
     if (fieldId != descriptor.GetFieldZeroId()) {
       fNFields++;
@@ -147,15 +147,15 @@ private:
         break;
       case ROOT::ENTupleStructure::kCollection:
         fNCollectionFields++;
-        visitedField.fNColumnAppends = 1;
-        visitedField.fCollectionView = fReader->GetCollectionView(fieldId);
+        fieldInfo.fNColumnAppends = 1;
+        fieldInfo.fCollectionView = fReader->GetCollectionView(fieldId);
         break;
       case ROOT::ENTupleStructure::kLeaf:
         fNLeafFields++;
         // Assume one append per column; this also works for two columns of
         // std::string.
-        visitedField.fNColumnAppends = field.GetLogicalColumnIds().size();
-        visitedField.fNRepetitions = field.GetNRepetitions();
+        fieldInfo.fNColumnAppends = field.GetLogicalColumnIds().size();
+        fieldInfo.fNRepetitions = field.GetNRepetitions();
         break;
       default:
         break;
@@ -166,10 +166,10 @@ private:
       if (field.IsProjectedField()) {
         continue;
       }
-      visitedField.fSubfields.push_back(VisitField(field.GetId()));
+      fieldInfo.fSubfields.push_back(VisitField(field.GetId()));
     }
 
-    return visitedField;
+    return fieldInfo;
   }
 
   void VisitColumns() {
