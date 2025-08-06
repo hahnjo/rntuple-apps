@@ -33,11 +33,17 @@ struct RNTupleAnalyzer final {
     std::uint64_t fColumnAppends = 0;
     std::uint64_t fCollectionAppends = 0;
     std::uint64_t fEmptyCollectionAppends = 0;
+    std::uint64_t fVisitedRecordFields = 0;
+    std::uint64_t fVisitedCollectionFields = 0;
+    std::uint64_t fVisitedColumns = 0;
 
     DataCounts &operator+=(const DataCounts &rhs) {
       fColumnAppends += rhs.fColumnAppends;
       fCollectionAppends += rhs.fCollectionAppends;
       fEmptyCollectionAppends += rhs.fEmptyCollectionAppends;
+      fVisitedRecordFields += rhs.fVisitedRecordFields;
+      fVisitedCollectionFields += rhs.fVisitedCollectionFields;
+      fVisitedColumns += rhs.fVisitedColumns;
       return *this;
     }
   };
@@ -48,6 +54,8 @@ private:
     std::size_t fNRepetitions = 1;
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
     std::vector<FieldInfo> fSubfields;
+    bool fIsRecordField = false;
+    bool fVisited = false;
 
     bool IsSimple() const {
       // Assume that a field is simple if it has no subfields. Additionally
@@ -83,6 +91,8 @@ private:
     }
 
     template <typename Index> DataCounts CountData(Index index) {
+      fVisited = true;
+
       DataCounts counts;
       counts.fColumnAppends = fNColumnAppends;
 
@@ -132,6 +142,23 @@ private:
 
       return counts;
     }
+
+    void CountVisitedAndReset(DataCounts &counts) {
+      if (!fVisited) {
+        return;
+      }
+
+      if (fIsRecordField) {
+        counts.fVisitedRecordFields++;
+      } else if (fCollectionView) {
+        counts.fVisitedCollectionFields++;
+      }
+      counts.fVisitedColumns += fNColumnAppends;
+      fVisited = false;
+      for (auto &field : fSubfields) {
+        field.CountVisitedAndReset(counts);
+      }
+    }
   };
   FieldInfo fFieldZero;
 
@@ -161,6 +188,7 @@ private:
       switch (field.GetStructure()) {
       case ROOT::ENTupleStructure::kRecord:
         fNRecordFields++;
+        fieldInfo.fIsRecordField = true;
         break;
       case ROOT::ENTupleStructure::kCollection:
         fNCollectionFields++;
@@ -219,7 +247,9 @@ public:
     return counts;
   }
   DataCounts CountData(ROOT::NTupleSize_t index) {
-    return fFieldZero.CountData(index);
+    DataCounts counts = fFieldZero.CountData(index);
+    fFieldZero.CountVisitedAndReset(counts);
+    return counts;
   }
 
   const ROOT::RNTupleDescriptor &GetDescriptor() const {
@@ -256,6 +286,8 @@ int main(int argc, char *argv[]) {
   std::cout << "# Columns: " << descriptor.GetNPhysicalColumns() << "\n";
   std::cout << "  Counted: " << analyzer.fNColumns << "\n";
 
+  std::cout << "\nFrom data:\n";
+
   auto counts = analyzer.CountData();
   std::uint64_t columnAppends = counts.fColumnAppends;
   std::cout << "# Column Appends: " << columnAppends << "\n";
@@ -264,6 +296,16 @@ int main(int argc, char *argv[]) {
   std::cout << " (empty: " << counts.fEmptyCollectionAppends << ", ";
   double percent =
       100.0 * counts.fEmptyCollectionAppends / counts.fCollectionAppends;
+  std::cout << percent << "%)\n";
+
+  std::cout << "# Visited Record Fields: " << counts.fVisitedRecordFields << " (";
+  percent = 100.0 * counts.fVisitedRecordFields / (entries * analyzer.fNRecordFields);
+  std::cout << percent << "%)\n";
+  std::cout << "# Visited Collection Fields: " << counts.fVisitedCollectionFields << " (";
+  percent = 100.0 * counts.fVisitedCollectionFields / (entries * analyzer.fNCollectionFields);
+  std::cout << percent << "%)\n";
+  std::cout << "# Visited Columns: " << counts.fVisitedColumns << " (";
+  percent = 100.0 * counts.fVisitedColumns / (entries * analyzer.fNColumns);
   std::cout << percent << "%)\n";
 
   if (argc > 3) {
@@ -292,28 +334,46 @@ int main(int argc, char *argv[]) {
         entries * analyzer.fNRecordFields * perRecordField * UsToSeconds;
     double perRecordFieldPredErr =
         entries * analyzer.fNRecordFields * perRecordFieldErr * UsToSeconds;
+    double perRecordFieldVisitedPred =
+        counts.fVisitedRecordFields * perRecordField * UsToSeconds;
+    double perRecordFieldVisitedPredErr =
+        counts.fVisitedRecordFields * perRecordFieldErr * UsToSeconds;
     std::cout << "per record field: " << perRecordField << " us +- "
               << perRecordFieldErr << " us\n";
     std::cout << " -> prediction: " << perRecordFieldPred << " s +- "
               << perRecordFieldPredErr << " s\n";
+    std::cout << " -> w/ visited: " << perRecordFieldVisitedPred << " s +- "
+              << perRecordFieldVisitedPredErr << " s\n";
 
     double perCollectionFieldPred = entries * analyzer.fNCollectionFields *
                                     perCollectionField * UsToSeconds;
     double perCollectionFieldPredErr = entries * analyzer.fNCollectionFields *
                                        perCollectionFieldErr * UsToSeconds;
+    double perCollectionFieldVisitedPred =
+        counts.fVisitedCollectionFields * perCollectionField * UsToSeconds;
+    double perCollectionFieldVisitedPredErr =
+        counts.fVisitedCollectionFields * perCollectionFieldErr * UsToSeconds;
     std::cout << "per collection field: " << perCollectionField << " us +- "
               << perCollectionFieldErr << " us\n";
     std::cout << " -> prediction: " << perCollectionFieldPred << " s +- "
               << perCollectionFieldPredErr << " s\n";
+    std::cout << " -> w/ visited: " << perCollectionFieldVisitedPred << " s +- "
+              << perCollectionFieldVisitedPredErr << " s\n";
 
     double perColumnPred =
         entries * analyzer.fNColumns * perColumn * UsToSeconds;
     double perColumnPredErr =
         entries * analyzer.fNColumns * perColumnErr * UsToSeconds;
+    double perColumnVisitedPred =
+        counts.fVisitedColumns * perColumn * UsToSeconds;
+    double perColumnVisitedPredErr =
+        counts.fVisitedColumns * perColumnErr * UsToSeconds;
     std::cout << "per column: " << perColumn << " us +- " << perColumnErr
               << " us\n";
     std::cout << " -> prediction: " << perColumnPred << " s +- "
               << perColumnPredErr << " s\n";
+    std::cout << " -> w/ visited: " << perColumnVisitedPred << " s +- "
+              << perColumnVisitedPredErr << " s\n";
 
     double perColumnAppendPred = columnAppends * perColumnAppend * UsToSeconds;
     double perColumnAppendPredErr =
@@ -329,8 +389,17 @@ int main(int argc, char *argv[]) {
     double totalPredErr = perBytePredErr + perRecordFieldPredErr +
                           perCollectionFieldPredErr + perColumnPredErr +
                           perColumnAppendPredErr;
-    std::cout << "\n => TOTAL: " << totalPred << " s +- " << totalPredErr
-              << " s\n";
+    double totalVisitedPred = perBytePred + perRecordFieldVisitedPred +
+                              perCollectionFieldVisitedPred +
+                              perColumnVisitedPred + perColumnAppendPred;
+    double totalVisitedPredErr = perBytePredErr + perRecordFieldVisitedPredErr +
+                                 perCollectionFieldVisitedPredErr +
+                                 perColumnVisitedPredErr +
+                                 perColumnAppendPredErr;
+    std::cout << "\n => TOTAL PREDICTION: " << totalPred << " s +- "
+              << totalPredErr << " s\n";
+    std::cout << " => based on visited: " << totalVisitedPred << " s +- "
+              << totalVisitedPredErr << " s\n";
   }
 
   return 0;
