@@ -50,7 +50,7 @@ struct RNTupleAnalyzer final {
 
 private:
   struct FieldInfo {
-    std::size_t fNColumnAppends = 0;
+    std::size_t fNColumns = 0;
     std::size_t fNRepetitions = 1;
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
     std::vector<FieldInfo> fSubfields;
@@ -61,7 +61,7 @@ private:
       // Assume that a field is simple if it has no subfields. Additionally
       // require that it has only a single column, which properly treats
       // std::bitset and std::string as non-simple fields.
-      return fSubfields.empty() && fNColumnAppends == 1;
+      return fSubfields.empty() && fNColumns == 1;
     }
 
     DataCounts CountComplexArray(ROOT::NTupleSize_t globalIndex) {
@@ -94,7 +94,7 @@ private:
       fVisited = true;
 
       DataCounts counts;
-      counts.fColumnAppends = fNColumnAppends;
+      counts.fColumnAppends = fNColumns;
 
       if (fCollectionView) {
         R__ASSERT(fNRepetitions == 1);
@@ -120,7 +120,7 @@ private:
       } else if (fNRepetitions > 1) {
         if (!fSubfields.empty()) {
           // std::array
-          R__ASSERT(fNColumnAppends == 0);
+          R__ASSERT(fNColumns == 0);
           R__ASSERT(fSubfields.size() == 1);
           auto &itemField = fSubfields[0];
           // For simple item fields, ROOT uses AppendV.
@@ -131,7 +131,7 @@ private:
           }
         } else {
           // std::bitset - currently not optimized with AppendV.
-          R__ASSERT(fNColumnAppends == 1);
+          R__ASSERT(fNColumns == 1);
           counts.fColumnAppends += fNRepetitions - 1;
         }
       } else {
@@ -153,7 +153,7 @@ private:
       } else if (fCollectionView) {
         counts.fVisitedCollectionFields++;
       }
-      counts.fVisitedColumns += fNColumnAppends;
+      counts.fVisitedColumns += fNColumns;
       fVisited = false;
       for (auto &field : fSubfields) {
         field.CountVisitedAndReset(counts);
@@ -192,14 +192,14 @@ private:
         break;
       case ROOT::ENTupleStructure::kCollection:
         fNCollectionFields++;
-        fieldInfo.fNColumnAppends = 1;
+        fieldInfo.fNColumns = 1;
         fieldInfo.fCollectionView = fReader->GetCollectionView(fieldId);
         break;
       case ROOT::ENTupleStructure::kLeaf:
         fNLeafFields++;
         // Assume one append per column; this also works for two columns of
         // std::string.
-        fieldInfo.fNColumnAppends = field.GetLogicalColumnIds().size();
+        fieldInfo.fNColumns = field.GetLogicalColumnIds().size();
         fieldInfo.fNRepetitions = field.GetNRepetitions();
         break;
       default:
