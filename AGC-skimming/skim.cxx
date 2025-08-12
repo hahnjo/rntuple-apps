@@ -69,7 +69,7 @@ static void ProcessInput(const std::string &path,
 
   // Get pointers to the read values.
   auto readElectron_cutBased =
-      readEntry->GetPtr<ROOT::RVec<int>>("Electron_cutBased");
+      readEntry->GetPtr<ROOT::RVec<std::int32_t>>("Electron_cutBased");
   auto readElectron_eta = readEntry->GetPtr<ROOT::RVec<float>>("Electron_eta");
   auto readElectron_pt = readEntry->GetPtr<ROOT::RVec<float>>("Electron_pt");
   auto readElectron_sip3d =
@@ -78,7 +78,7 @@ static void ProcessInput(const std::string &path,
   auto readJet_btagCSVV2 =
       readEntry->GetPtr<ROOT::RVec<float>>("Jet_btagCSVV2");
   auto readJet_eta = readEntry->GetPtr<ROOT::RVec<float>>("Jet_eta");
-  auto readJet_jetId = readEntry->GetPtr<ROOT::RVec<int>>("Jet_jetId");
+  auto readJet_jetId = readEntry->GetPtr<ROOT::RVec<std::int32_t>>("Jet_jetId");
   auto readJet_mass = readEntry->GetPtr<ROOT::RVec<float>>("Jet_mass");
   auto readJet_phi = readEntry->GetPtr<ROOT::RVec<float>>("Jet_phi");
   auto readJet_pt = readEntry->GetPtr<ROOT::RVec<float>>("Jet_pt");
@@ -92,7 +92,7 @@ static void ProcessInput(const std::string &path,
 
   // Get pointers to write values.
   auto writeElectron_cutBased =
-      writeEntry->GetPtr<ROOT::RVec<int>>("Electron_cutBased");
+      writeEntry->GetPtr<ROOT::RVec<std::int32_t>>("Electron_cutBased");
   auto writeElectron_eta =
       writeEntry->GetPtr<ROOT::RVec<float>>("Electron_eta");
   auto writeElectron_pt = writeEntry->GetPtr<ROOT::RVec<float>>("Electron_pt");
@@ -102,7 +102,7 @@ static void ProcessInput(const std::string &path,
   auto writeJet_btagCSVV2 =
       writeEntry->GetPtr<ROOT::RVec<float>>("Jet_btagCSVV2");
   auto writeJet_eta = writeEntry->GetPtr<ROOT::RVec<float>>("Jet_eta");
-  auto writeJet_jetId = writeEntry->GetPtr<ROOT::RVec<int>>("Jet_jetId");
+  auto writeJet_jetId = writeEntry->GetPtr<ROOT::RVec<std::int32_t>>("Jet_jetId");
   auto writeJet_mass = writeEntry->GetPtr<ROOT::RVec<float>>("Jet_mass");
   auto writeJet_phi = writeEntry->GetPtr<ROOT::RVec<float>>("Jet_phi");
   auto writeJet_pt = writeEntry->GetPtr<ROOT::RVec<float>>("Jet_pt");
