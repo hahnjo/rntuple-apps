@@ -7,5 +7,7 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 
 OPTS = -O2 -g
 
-skim: skim.cxx
+all: skim skim-df
+
+%: %.cxx
 	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
