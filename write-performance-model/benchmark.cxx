@@ -8,6 +8,7 @@
 #include <TROOT.h>
 #include <TSystem.h>
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -163,6 +164,17 @@ int main(int argc, char *argv[]) {
     vector_int32_0 = benchmark("std::vector<std::int32_t> with 0 elements", f);
   }
 
+  BenchmarkResult array_int32;
+  {
+    ROOT::RField<std::array<std::int32_t, 1>> f("array_int32");
+    array_int32 = benchmark("std::array<std::int32_t, 1>", f);
+  }
+  BenchmarkResult array_int64;
+  {
+    ROOT::RField<std::array<std::int64_t, 1>> f("array_int64");
+    array_int64 = benchmark("std::array<std::int64_t, 1>", f);
+  }
+
   BenchmarkResult vector_tuple_int32_2;
   {
     using FieldType = std::vector<std::tuple<std::int32_t>>;
@@ -246,6 +258,18 @@ int main(int argc, char *argv[]) {
       CombineErrors(vector_int32_0, int64) * ToUsPerFieldPerEntry;
   std::cout << "  per vector field: " << perVector << " us +- "
             << perVectorError << " us\n";
+
+  double perArray = (array_int32.mean - int32.mean) * ToUsPerFieldPerEntry;
+  double perArrayError =
+      CombineErrors(array_int32, int32) * ToUsPerFieldPerEntry;
+  double perArray64 = (array_int64.mean - int64.mean) * ToUsPerFieldPerEntry;
+  double perArray64Error =
+      CombineErrors(array_int64, int64) * ToUsPerFieldPerEntry;
+
+  std::cout << "  per array field: " << perArray << " us +- " << perArrayError
+            << " us\n";
+  std::cout << "    from std::int64_t: " << perArray64 << " us +- "
+            << perArray64Error << " us\n";
 
   double perColumn =
       (vector_tuple_int32_int32.mean - vector_tuple_int32_2.mean) *
