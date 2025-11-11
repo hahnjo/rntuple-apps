@@ -55,14 +55,8 @@ private:
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
     std::vector<FieldInfo> fSubfields;
     bool fIsRecordField = false;
+    bool fIsSimpleField = false;
     bool fVisited = false;
-
-    bool IsSimple() const {
-      // Assume that a field is simple if it has no subfields. Additionally
-      // require that it has only a single column, which properly treats
-      // std::bitset and std::string as non-simple fields.
-      return fSubfields.empty() && fNColumns == 1;
-    }
 
     DataCounts CountComplexArray(ROOT::NTupleSize_t globalIndex) {
       R__ASSERT(fSubfields.size() == 1);
@@ -110,7 +104,7 @@ private:
         }
 
         // For simple item fields, ROOT uses AppendV.
-        if (itemField.IsSimple() && range.size() > 0) {
+        if (itemField.fIsSimpleField && range.size() > 0) {
           counts.fColumnAppends++;
         } else {
           for (auto index : range) {
@@ -124,7 +118,7 @@ private:
           R__ASSERT(fSubfields.size() == 1);
           auto &itemField = fSubfields[0];
           // For simple item fields, ROOT uses AppendV.
-          if (itemField.IsSimple()) {
+          if (itemField.fIsSimpleField) {
             counts.fColumnAppends += 1;
           } else {
             counts += CountComplexArray(index);
@@ -183,6 +177,13 @@ private:
     const auto &field = descriptor.GetFieldDescriptor(fieldId);
     FieldInfo fieldInfo;
 
+    for (const auto &field : descriptor.GetFieldIterable(fieldId)) {
+      if (field.IsProjectedField()) {
+        continue;
+      }
+      fieldInfo.fSubfields.push_back(VisitField(field.GetId()));
+    }
+
     if (fieldId != descriptor.GetFieldZeroId()) {
       fNFields++;
       switch (field.GetStructure()) {
@@ -195,23 +196,26 @@ private:
         fieldInfo.fNColumns = 1;
         fieldInfo.fCollectionView = fReader->GetCollectionView(fieldId);
         break;
-      case ROOT::ENTupleStructure::kLeaf:
+      case ROOT::ENTupleStructure::kLeaf: {
         fNLeafFields++;
         // Assume one append per column; this also works for two columns of
         // std::string.
         fieldInfo.fNColumns = field.GetLogicalColumnIds().size();
         fieldInfo.fNRepetitions = field.GetNRepetitions();
+        const std::string &type = field.GetTypeName();
+        if (type.rfind("std::array<", 0) != 0 &&
+            type.rfind("std::bitset<") != 0 && type != "std::string") {
+          // A field can only be simple if it has no subfields and a single
+          // column. Note that this also applies to std::bitset, which we
+          // therefore filter out explicitly.
+          fieldInfo.fIsSimpleField =
+              fieldInfo.fSubfields.empty() && fieldInfo.fNColumns == 1;
+        }
         break;
+      }
       default:
         break;
       }
-    }
-
-    for (const auto &field : descriptor.GetFieldIterable(fieldId)) {
-      if (field.IsProjectedField()) {
-        continue;
-      }
-      fieldInfo.fSubfields.push_back(VisitField(field.GetId()));
     }
 
     return fieldInfo;
