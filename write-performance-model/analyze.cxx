@@ -55,6 +55,7 @@ private:
     std::optional<ROOT::RNTupleCollectionView> fCollectionView;
     std::vector<FieldInfo> fSubfields;
     bool fIsRecordField = false;
+    bool fIsCollectionField = false;
     bool fIsSimpleField = false;
     bool fVisited = false;
 
@@ -144,7 +145,7 @@ private:
 
       if (fIsRecordField) {
         counts.fVisitedRecordFields++;
-      } else if (fCollectionView) {
+      } else if (fIsCollectionField) {
         counts.fVisitedCollectionFields++;
       }
       counts.fVisitedColumns += fNColumns;
@@ -193,21 +194,27 @@ private:
         break;
       case ROOT::ENTupleStructure::kCollection:
         fNCollectionFields++;
+        fieldInfo.fIsCollectionField = true;
         fieldInfo.fNColumns = 1;
         fieldInfo.fCollectionView = fReader->GetCollectionView(fieldId);
         break;
       case ROOT::ENTupleStructure::kLeaf: {
-        fNLeafFields++;
         // Assume one append per column; this also works for two columns of
         // std::string.
         fieldInfo.fNColumns = field.GetLogicalColumnIds().size();
         fieldInfo.fNRepetitions = field.GetNRepetitions();
         const std::string &type = field.GetTypeName();
-        if (type.rfind("std::array<", 0) != 0 &&
-            type.rfind("std::bitset<") != 0 && type != "std::string") {
+        if (type.rfind("std::array<", 0) == 0 ||
+            type.rfind("std::bitset<") == 0 || type == "std::string") {
+          // These types are treated as collection fields, even though they have
+          // a different strutural role on disk.
+          fNCollectionFields++;
+          fieldInfo.fIsCollectionField = true;
+        } else {
+          fNLeafFields++;
           // A field can only be simple if it has no subfields and a single
           // column. Note that this also applies to std::bitset, which we
-          // therefore filter out explicitly.
+          // treat explicitly above.
           fieldInfo.fIsSimpleField =
               fieldInfo.fSubfields.empty() && fieldInfo.fNColumns == 1;
         }
