@@ -13,6 +13,7 @@
 #include <ROOT/RPageAllocator.hxx>
 #include <ROOT/RPageSinkBuf.hxx>
 #include <ROOT/RPageStorage.hxx>
+#include <TVirtualStreamerInfo.h>
 
 #include <zmq.h>
 
@@ -114,6 +115,11 @@ class RPageSinkZeroMQServer final : public RPagePersistentSink {
   /// Whether to send the key to the clients instead of writing.
   bool fSendKey;
 
+  /// On UpdateSchema(), the new class fields register the corresponding
+  /// streamer info here so that the streamer info records in the file can be
+  /// properly updated on dataset commit
+  ROOT::Internal::RNTupleSerializer::StreamerInfoMap_t fInfosOfClassFields;
+
 public:
   RPageSinkZeroMQServer(const RNTupleWriterZeroMQ::Config &config)
       : RPagePersistentSink(config.fNTupleName, config.fOptions),
@@ -164,7 +170,40 @@ public:
     }
     R__ASSERT(fClientsSendData ||
               fCurrentOffset % kServerClientWriteAlignment == 0);
-  };
+  }
+
+  void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset,
+                    ROOT::NTupleSize_t firstEntry) final {
+    // Copied from RPageSinkFile::UpdateSchema
+    RPagePersistentSink::UpdateSchema(changeset, firstEntry);
+
+    auto fnAddStreamerInfo = [this](const ROOT::RFieldBase *field) {
+      const TClass *cl = nullptr;
+      if (auto classField = dynamic_cast<const ROOT::RClassField *>(field)) {
+        cl = classField->GetClass();
+      } else if (auto streamerField =
+                     dynamic_cast<const ROOT::RStreamerField *>(field)) {
+        cl = streamerField->GetClass();
+      }
+      if (!cl)
+        return;
+
+      auto streamerInfo = cl->GetStreamerInfo(field->GetTypeVersion());
+      if (!streamerInfo) {
+        throw ROOT::RException(R__FAIL(
+            std::string("cannot get streamerInfo for ") + cl->GetName() + " [" +
+            std::to_string(field->GetTypeVersion()) + "]"));
+      }
+      fInfosOfClassFields[streamerInfo->GetNumber()] = streamerInfo;
+    };
+
+    for (const auto field : changeset.fAddedFields) {
+      fnAddStreamerInfo(field);
+      for (const auto &subField : *field) {
+        fnAddStreamerInfo(&subField);
+      }
+    }
+  }
 
   RNTupleLocator CommitPageImpl(ColumnHandle_t, const RPage &) override {
     throw ROOT::RException(
@@ -311,7 +350,24 @@ public:
   void CommitDatasetImpl(unsigned char *serializedFooter,
                          std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitDatasetImpl
-    fWriter->UpdateStreamerInfos(fDescriptorBuilder.BuildStreamerInfos());
+
+    // Add the streamer info records from streamer fields: because of runtime
+    // polymorphism we may need to add additional
+    // types not covered by the type names of the class fields
+    for (const auto &extraTypeInfo :
+         fDescriptorBuilder.GetDescriptor().GetExtraTypeInfoIterable()) {
+      if (extraTypeInfo.GetContentId() !=
+          ROOT::EExtraTypeInfoIds::kStreamerInfo)
+        continue;
+      // Ideally, we would avoid deserializing the streamer info records of the
+      // streamer fields that we just serialized. However, this happens only
+      // once at the end of writing and only when streamer fields are used, so
+      // the preference here is for code simplicity.
+      fInfosOfClassFields.merge(RNTupleSerializer::DeserializeStreamerInfos(
+                                    extraTypeInfo.GetContent())
+                                    .Unwrap());
+    }
+    fWriter->UpdateStreamerInfos(fInfosOfClassFields);
     std::unique_ptr<unsigned char[]> bufFooterZip(new unsigned char[length]);
     auto szFooterZip = RNTupleCompressor::Zip(
         serializedFooter, length, GetWriteOptions().GetCompression(),
@@ -348,6 +404,7 @@ void RNTupleWriterZeroMQ::Collect(std::size_t clients) {
 
     // Create a temporary descriptor to deserialize the client's page list.
     RNTupleDescriptorBuilder descriptorBuilder;
+    descriptorBuilder.SetVersionForWriting();
     descriptorBuilder.SetNTuple("ntuple", "");
     RClusterGroupDescriptorBuilder cgBuilder;
     cgBuilder.ClusterGroupId(0).NClusters(1);
