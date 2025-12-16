@@ -42,7 +42,6 @@ int main(int argc, char *argv[]) {
 
   long entries = std::stol(argv[1]);
   // mode & 8 = 0: aggregator thread on root rank
-  //   mode & 4 = 1: reduce contention on root rank with condition_variable
   //   mode & 3 = 0: sending all data to the aggregator
   //   mode & 3 = 1: sending only metadata, payload written by individual
   //                 processes
@@ -106,11 +105,9 @@ int main(int argc, char *argv[]) {
     sendData = (mode & 3) == 0;
     config.fSendData = sendData;
     config.fSendKey = (mode & 3) == 2;
-    config.fReduceRootContention = !!(mode & 4);
 
     if (rank == kRoot) {
-      printf("sendData: %d, sendKey: %d, reduceRootContention: %d\n",
-             config.fSendData, config.fSendKey, config.fReduceRootContention);
+      printf("sendData: %d, sendKey: %d\n", config.fSendData, config.fSendKey);
     }
   } else {
     config.fSendData = false;

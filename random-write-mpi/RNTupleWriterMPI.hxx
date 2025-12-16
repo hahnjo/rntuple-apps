@@ -50,8 +50,6 @@ public:
     /// before writing the payload data. Only makes sense together with the
     /// previous option fSendData.
     bool fSendKey = false;
-    /// Whether to reduce contention in the MPI library on the root.
-    bool fReduceRootContention = false;
     /// Whether to write without aggregator, using a global offset.
     GlobalOffset fUseGlobalOffset = kFalse;
   };

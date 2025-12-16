@@ -17,9 +17,7 @@
 
 #include <mpi.h>
 
-#include <condition_variable>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -395,31 +393,19 @@ class RNTupleWriterMPIAggregator {
   /// The model to write the ntuple; needs to be destructed before fSink.
   std::unique_ptr<RNTupleModel> fModel;
 
-  /// The root process rank running the aggregator.
-  int fRoot;
   /// The MPI communicator handle.
   MPI_Comm fComm;
-
-  /// A mutex to reduce contention in the MPI library on the root.
-  std::mutex fMutex;
-  /// A condition variable to signal from the aggregator.
-  std::condition_variable fCV;
-  /// The signal from the aggregator.
-  bool fSignal = false;
 
   /// Whether the processes are expected to send the payload data.
   bool fProcessesSendData;
   /// Whether to send the key to the processes instead of writing.
   bool fSendKey;
-  /// Whether to reduce contention in the MPI library on the root.
-  bool fReduceRootContention;
 
 public:
-  RNTupleWriterMPIAggregator(const RNTupleWriterMPI::Config &config, int root,
+  RNTupleWriterMPIAggregator(const RNTupleWriterMPI::Config &config,
                              MPI_Comm comm)
-      : fModel(config.fModel->Clone()), fRoot(root), fComm(comm),
-        fProcessesSendData(config.fSendData), fSendKey(config.fSendKey),
-        fReduceRootContention(config.fReduceRootContention) {
+      : fModel(config.fModel->Clone()), fComm(comm),
+        fProcessesSendData(config.fSendData), fSendKey(config.fSendKey) {
     fSink = std::make_unique<RPageSinkMPIAggregator>(config);
     fModel->Freeze();
     fSink->Init(*fModel);
@@ -436,24 +422,6 @@ public:
     fSink->AppendCluster(clusterDescriptor);
   }
 
-  void WaitForSignal() {
-    assert(fReduceRootContention);
-    std::unique_lock lk(fMutex);
-    fCV.wait(lk, [this] { return fSignal; });
-    fSignal = false;
-  }
-
-private:
-  void SignalFromAggregator() {
-    assert(fReduceRootContention);
-    {
-      std::unique_lock lk(fMutex);
-      fSignal = true;
-    }
-    fCV.notify_one();
-  }
-
-public:
   void Collect(int processes) {
     while (processes > 0) {
       MPI_Status status;
@@ -565,10 +533,6 @@ public:
         }
       }
       MPI_Send(&sendBuf[0], size, MPI_BYTE, source, kTagOffset, fComm);
-
-      if (fReduceRootContention && source == fRoot) {
-        SignalFromAggregator();
-      }
     }
   }
 
@@ -657,8 +621,6 @@ class RPageSinkMPI final : public RPageSink {
   bool fSendData;
   /// Whether the aggregator sends the key.
   bool fAggregatorSendsKey;
-  /// Whether to reduce contention in the MPI library on the root.
-  bool fReduceRootContention;
   /// Whether to write without aggregator, using a global offset.
   RNTupleWriterMPI::GlobalOffset fUseGlobalOffset = RNTupleWriterMPI::kFalse;
   /// The opened file descriptor to store the global offset (may alias
@@ -670,7 +632,6 @@ public:
       : RPageSink(config.fNTupleName, config.fOptions), fRoot(root),
         fStorage(config.fStorage), fWriteAlignment(config.fWriteAlignment),
         fSendData(config.fSendData), fAggregatorSendsKey(config.fSendKey),
-        fReduceRootContention(config.fReduceRootContention),
         fUseGlobalOffset(config.fUseGlobalOffset) {
     fMetrics = RNTupleMetrics("RPageSinkMPI");
     fCounters = std::make_unique<RCounters>(RCounters{
@@ -708,8 +669,7 @@ public:
     MPI_Comm_size(fComm, &fSize);
 
     if (fRank == root) {
-      fAggregator =
-          std::make_unique<RNTupleWriterMPIAggregator>(config, root, fComm);
+      fAggregator = std::make_unique<RNTupleWriterMPIAggregator>(config, fComm);
       fMetrics.ObserveMetrics(fAggregator->GetMetrics());
       if (!fUseGlobalOffset) {
         fAggregatorThread =
@@ -1205,22 +1165,13 @@ public:
         RNTupleAtomicTimer timer(fCounters->fTimeWallCommAggregator,
                                  fCounters->fTimeCpuCommAggregator);
 
-        MPI_Request req[2];
-
-        MPI_Isend(buffer.data(), buffer.size(), MPI_BYTE, fRoot, kTagAggregator,
-                  fComm, &req[0]);
+        MPI_Send(buffer.data(), buffer.size(), MPI_BYTE, fRoot, kTagAggregator,
+                 fComm);
 
         // Get back the reply, the message is empty unless we did not send the
         // data.
-        MPI_Irecv(&recvBuf[0], sizeof(recvBuf), MPI_BYTE, fRoot, kTagOffset,
-                  fComm, &req[1]);
-
-        if (fReduceRootContention && fAggregator) {
-          fAggregator->WaitForSignal();
-        }
-
-        MPI_Wait(&req[0], MPI_STATUS_IGNORE);
-        MPI_Wait(&req[1], &status);
+        MPI_Recv(&recvBuf[0], sizeof(recvBuf), MPI_BYTE, fRoot, kTagOffset,
+                 fComm, &status);
       }
 
       if (!fSendData) {
