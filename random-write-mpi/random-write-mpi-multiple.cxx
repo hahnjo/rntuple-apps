@@ -154,6 +154,14 @@ int main(int argc, char *argv[]) {
   configRun.fSendKey = config.fSendKey;
   configRun.fUseGlobalOffset = config.fUseGlobalOffset;
 
+  RNTupleWriterMPI::Config configDummy;
+  configDummy.fStorage = Filename;
+  configDummy.fOptions = config.fOptions;
+  configDummy.fWriteAlignment = config.fWriteAlignment;
+  configDummy.fSendData = config.fSendData;
+  configDummy.fSendKey = config.fSendKey;
+  configDummy.fUseGlobalOffset = config.fUseGlobalOffset;
+
   // Prepare the data.
   std::mt19937 generator;
   std::poisson_distribution<int> poisson(5);
@@ -219,6 +227,29 @@ int main(int argc, char *argv[]) {
       writerRun->Fill(*entryRun);
     }
   }
+
+  // Write dummy RNTuples that are immediately committed.
+  for (int i = 0; i < 3; i++) {
+    auto model = ROOT::RNTupleModel::Create();
+    model->MakeField<std::int32_t>("f");
+
+    RNTupleWriterMPI::Config config;
+    config.fModel = std::move(model);
+    std::string ntupleName = "dummy" + std::to_string(i);
+    config.fNTupleName = ntupleName;
+    config.fStorage = configDummy.fStorage;
+    config.fOptions = configDummy.fOptions;
+    config.fWriteAlignment = config.fWriteAlignment;
+    config.fSendData = config.fSendData;
+    config.fSendKey = config.fSendKey;
+    config.fUseGlobalOffset = config.fUseGlobalOffset;
+
+    auto writer = RNTupleWriterMPI::Append(std::move(config), file.get(), kRoot,
+                                           MPI_COMM_WORLD);
+    writer->Fill();
+    writer.reset();
+  }
+
   // In principle, it would not be needed to commit the cluster manually,
   // but this will include the last flush in the metrics just below.
   writer->CommitCluster();

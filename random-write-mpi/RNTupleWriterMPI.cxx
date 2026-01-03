@@ -13,7 +13,9 @@
 #include <ROOT/RPageAllocator.hxx>
 #include <ROOT/RPageSinkBuf.hxx>
 #include <ROOT/RPageStorage.hxx>
+#include <TCollection.h>
 #include <TFile.h>
+#include <TFree.h>
 #include <TVirtualStreamerInfo.h>
 
 #include <mpi.h>
@@ -78,6 +80,8 @@ static constexpr auto kBlobKeyLen =
 class RPageSinkMPIAggregator final : public RPagePersistentSink {
   /// The file writer to write the ntuple.
   std::unique_ptr<RNTupleFileWriter> fWriter;
+  /// The TFile being written to.
+  TFile *fFile = nullptr;
   /// The last offset in the file that was reserved in CommitSealedPageVImpl.
   std::uint64_t fLastOffset = 0;
   /// The current offset in the file.
@@ -120,6 +124,7 @@ public:
     } else {
       fWriter = RNTupleFileWriter::Append(config.fNTupleName, *file,
                                           options.GetMaxKeySize());
+      fFile = file;
     }
   }
 
@@ -166,6 +171,23 @@ public:
     fCounters->fSzWritePayload.Add(nBytesWritten);
   }
 
+  void PadCurrentOffset() {
+    if (!fProcessesSendData && fCurrentOffset % fWriteAlignment != 0) {
+      // Insert a dummy blob to make the offset aligned. For this, we need at
+      // least kBlobKeyLen bytes to write the key.
+      auto dummyOffset = fCurrentOffset + kBlobKeyLen;
+      std::size_t bytes = 0;
+      if (dummyOffset % fWriteAlignment != 0) {
+        bytes = fWriteAlignment - dummyOffset % fWriteAlignment;
+      }
+      auto data = std::make_unique<unsigned char[]>(bytes);
+      auto offset = fWriter->WriteBlob(data.get(), bytes, 0);
+      R__ASSERT(offset == dummyOffset);
+      fCurrentOffset = offset + bytes;
+    }
+    R__ASSERT(fProcessesSendData || fCurrentOffset % fWriteAlignment == 0);
+  }
+
   void InitImpl(unsigned char *serializedHeader,
                 std::uint32_t length) override {
     // Copied from RPageSinkFile::InitImpl
@@ -177,19 +199,7 @@ public:
     auto offset =
         fWriter->WriteNTupleHeader(zipBuffer.get(), szZipHeader, length);
     fCurrentOffset = offset + szZipHeader;
-    if (!fProcessesSendData && fCurrentOffset % fWriteAlignment != 0) {
-      // Insert a dummy blob to make the offset aligned. For this, we need at
-      // least kBlobKeyLen bytes to write the key.
-      auto dummyOffset = fCurrentOffset + kBlobKeyLen;
-      std::size_t bytes = 0;
-      if (dummyOffset % fWriteAlignment != 0) {
-        bytes = fWriteAlignment - dummyOffset % fWriteAlignment;
-      }
-      offset = fWriter->ReserveBlob(bytes, 0);
-      R__ASSERT(offset == dummyOffset);
-      fCurrentOffset = offset + bytes;
-    }
-    R__ASSERT(fProcessesSendData || fCurrentOffset % fWriteAlignment == 0);
+    PadCurrentOffset();
   }
 
   void UpdateSchema(const ROOT::Internal::RNTupleModelChangeset &changeset,
@@ -370,8 +380,14 @@ public:
     std::lock_guard lock(gMutex);
     RNTupleLocator result;
     result.SetNBytesOnStorage(szPageListZip);
-    result.SetPosition(
-        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
+    auto offset =
+        fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length);
+    result.SetPosition(offset);
+    fCurrentOffset = offset + szPageListZip;
+    // If we append to a TFile, other writers require that we pad.
+    if (fFile) {
+      PadCurrentOffset();
+    }
     return result;
   }
   void CommitDatasetImpl(unsigned char *serializedFooter,
@@ -402,6 +418,38 @@ public:
         bufFooterZip.get());
     fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
     fWriter->Commit();
+    if (fFile) {
+      // RNTupleFileWriter::Commit wrote the anchor and called TFile::Write,
+      // which in turn flushes FreeSegments, KeysList and FreeSegments. On
+      // successive calls, this may leed to gaps in the file that break
+      // assumptions about linear writing. Iterate all free segments and write
+      // blobs to fill them.
+      std::vector<unsigned char> data;
+      for (auto free :
+           ROOT::RangeStaticCast<TFree *>(*fFile->GetListOfFree())) {
+        auto first = free->GetFirst();
+        if (first >= fFile->GetEND()) {
+          // This is the dummy free entry at the (current) end of the file.
+          continue;
+        }
+        // Do *not* use Sizeof(), it returns the "number of bytes occupied by
+        // this TFree on permanent storage". We want the total gap size.
+        auto size = static_cast<std::size_t>(free->GetLast() - first + 1);
+        if (size <= kBlobKeyLen) {
+          // The free segment is too small to fit an RBlob, so it *should* not
+          // cause problems.
+          continue;
+        }
+        auto bytes = size - kBlobKeyLen;
+        data.resize(bytes);
+        auto offset = fWriter->WriteBlob(data.data(), bytes, 0);
+        R__ASSERT(offset == first + kBlobKeyLen);
+      }
+      // Now get back the total file size, which is the next offset after all
+      // free segments are filled.
+      fCurrentOffset = fFile->GetEND();
+      PadCurrentOffset();
+    }
   }
 };
 
