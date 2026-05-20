@@ -7,7 +7,7 @@
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleSerialize.hxx>
-#include <ROOT/RNTupleUtil.hxx>
+#include <ROOT/RNTupleTypes.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RNTupleZip.hxx>
 #include <ROOT/RPageAllocator.hxx>
@@ -355,8 +355,8 @@ public:
         fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
     return result;
   }
-  void CommitDatasetImpl(unsigned char *serializedFooter,
-                         std::uint32_t length) override {
+  ROOT::Internal::RNTupleLink CommitDatasetImpl(unsigned char *serializedFooter,
+                                                std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitDatasetImpl
 
     // Add the streamer info records from streamer fields: because of runtime
@@ -381,7 +381,14 @@ public:
         serializedFooter, length, GetWriteOptions().GetCompression(),
         bufFooterZip.get());
     fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
-    fWriter->Commit();
+    return fWriter->Commit(GetWriteOptions().GetCompression());
+  }
+
+  std::unique_ptr<RPageSink>
+  CloneAsHidden(std::string_view,
+                const ROOT::RNTupleWriteOptions &) const final {
+    throw ROOT::RException(
+        R__FAIL("cloning not supported via RPageSinkMPIAggregator"));
   }
 };
 
@@ -1363,7 +1370,7 @@ public:
     }
   }
 
-  void CommitDatasetImpl() final {
+  ROOT::Internal::RNTupleLink CommitDatasetImpl() final {
     if (!fUseGlobalOffset) {
       MPI_Send(NULL, 0, MPI_BYTE, fRoot, kTagAggregator, fComm);
     } else {
@@ -1417,6 +1424,19 @@ public:
       // fAggregator must not be destructed because its metrics can still be
       // queried by the user.
     }
+    return {};
+  }
+
+  std::unique_ptr<RPageSink>
+  CloneAsHidden(std::string_view,
+                const ROOT::RNTupleWriteOptions &) const final {
+    throw ROOT::RException(R__FAIL("cloning not supported via RPageSinkMPI"));
+  }
+
+  void CommitAttributeSet(std::string_view,
+                          const ROOT::Internal::RNTupleLink &) final {
+    throw ROOT::RException(
+        R__FAIL("comitting attribute sets not supported via RPageSinkMPI"));
   }
 };
 

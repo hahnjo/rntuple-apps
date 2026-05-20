@@ -7,7 +7,7 @@
 #include <ROOT/RNTupleDescriptor.hxx>
 #include <ROOT/RNTupleMetrics.hxx>
 #include <ROOT/RNTupleSerialize.hxx>
-#include <ROOT/RNTupleUtil.hxx>
+#include <ROOT/RNTupleTypes.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RNTupleZip.hxx>
 #include <ROOT/RPageAllocator.hxx>
@@ -347,8 +347,8 @@ public:
         fWriter->WriteBlob(bufPageListZip.get(), szPageListZip, length));
     return result;
   }
-  void CommitDatasetImpl(unsigned char *serializedFooter,
-                         std::uint32_t length) override {
+  ROOT::Internal::RNTupleLink CommitDatasetImpl(unsigned char *serializedFooter,
+                                                std::uint32_t length) override {
     // Copied from RPageSinkFile::CommitDatasetImpl
 
     // Add the streamer info records from streamer fields: because of runtime
@@ -373,7 +373,14 @@ public:
         serializedFooter, length, GetWriteOptions().GetCompression(),
         bufFooterZip.get());
     fWriter->WriteNTupleFooter(bufFooterZip.get(), szFooterZip, length);
-    fWriter->Commit();
+    return fWriter->Commit(GetWriteOptions().GetCompression());
+  }
+
+  std::unique_ptr<RPageSink>
+  CloneAsHidden(std::string_view,
+                const ROOT::RNTupleWriteOptions &) const final {
+    throw ROOT::RException(
+        R__FAIL("cloning not supported via RPageSinkZeroMQServer"));
   }
 };
 
@@ -878,7 +885,7 @@ public:
   void CommitClusterGroup() final {
     // TODO or ignored?
   }
-  void CommitDatasetImpl() final {
+  ROOT::Internal::RNTupleLink CommitDatasetImpl() final {
     ZMQSend(fSocket, NULL, 0);
 
     zmq_msg_t msg;
@@ -898,6 +905,20 @@ public:
       close(fFileDes);
       fFileDes = -1;
     }
+    return {};
+  }
+
+  std::unique_ptr<RPageSink>
+  CloneAsHidden(std::string_view,
+                const ROOT::RNTupleWriteOptions &) const final {
+    throw ROOT::RException(
+        R__FAIL("cloning not supported via RPageSinkZeroMQClient"));
+  }
+
+  void CommitAttributeSet(std::string_view,
+                          const ROOT::Internal::RNTupleLink &) final {
+    throw ROOT::RException(R__FAIL(
+        "comitting attribute sets not supported via RPageSinkZeroMQClient"));
   }
 };
 
