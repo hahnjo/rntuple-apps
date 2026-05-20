@@ -5,7 +5,7 @@
 #include <ROOT/RColumn.hxx>
 #include <ROOT/RColumnElementBase.hxx>
 #include <ROOT/RNTupleModel.hxx>
-#include <ROOT/RNTupleUtil.hxx>
+#include <ROOT/RNTupleTypes.hxx>
 #include <ROOT/RNTupleWriteOptions.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RPageNullSink.hxx>

@@ -198,7 +198,7 @@ private:
         fieldInfo.fNColumns = 1;
         fieldInfo.fCollectionView = fReader->GetCollectionView(fieldId);
         break;
-      case ROOT::ENTupleStructure::kLeaf: {
+      case ROOT::ENTupleStructure::kPlain: {
         // Assume one append per column; this also works for two columns of
         // std::string.
         fieldInfo.fNColumns = field.GetLogicalColumnIds().size();
