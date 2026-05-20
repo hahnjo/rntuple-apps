@@ -13,4 +13,4 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 OPTS = -O2 -g
 
 random-write-hybrid: random-write-hybrid.cxx
-	$(MPI_CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
+	$(MPI_CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS)

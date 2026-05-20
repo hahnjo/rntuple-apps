@@ -10,4 +10,4 @@ OPTS = -O2 -g
 all: skim skim-df
 
 %: %.cxx
-	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
+	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS)

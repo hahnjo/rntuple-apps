@@ -8,4 +8,4 @@ ROOT_LIBS = $(shell $(ROOT_CONFIG) --libs)
 OPTS = -O2 -g
 
 random-write: random-write.cxx
-	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
+	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS)

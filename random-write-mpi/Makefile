@@ -20,4 +20,4 @@ default: random-write-mpi
 random-write-mpi.o RNTupleWriterMPI.o: RNTupleWriterMPI.hxx
 
 random-write-mpi: random-write-mpi.o RNTupleWriterMPI.o
-	$(MPI_CXX) $^ -o $@ -lROOTNTuple $(ROOT_LIBS)
+	$(MPI_CXX) $^ -o $@ $(ROOT_LIBS)

@@ -10,7 +10,7 @@ OPTS = -O2 -g
 all: analyze benchmark cms-Muon libAoS-SoA.so libFairRoot.so libMuon.so libPHYSLITE.so measure-AoS-SoA serialize
 
 %: %.cxx
-	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS) -lROOTNTuple
+	$(CXX) $(OPTS) $< -o $@ $(ROOT_CFLAGS) $(ROOT_LIBS)
 
 %.cxx: %.hxx %_LinkDef.h
 	rootcling -f $@ $^
