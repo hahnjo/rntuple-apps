@@ -11,8 +11,6 @@
 #include <ROOT/TThreadExecutor.hxx>
 #include <TROOT.h>
 
-using ROOT::Experimental::RNTupleParallelWriter;
-
 #include "json.hpp"
 using nlohmann::ordered_json;
 
@@ -199,14 +197,14 @@ static void WriteOutput(const std::string &process,
   std::mutex m;
   std::unique_ptr<ROOT::RNTupleWriter> writer;
   std::unique_ptr<ROOT::TBufferMerger> bufferMerger;
-  std::unique_ptr<RNTupleParallelWriter> parallelWriter;
+  std::unique_ptr<ROOT::RNTupleParallelWriter> parallelWriter;
   if (mode <= 1) {
     writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events", filename);
   } else if (mode == 3) {
     bufferMerger.reset(new ROOT::TBufferMerger(filename.c_str()));
   } else if (mode == 4) {
-    parallelWriter =
-        RNTupleParallelWriter::Recreate(CreateModel(), "Events", filename);
+    parallelWriter = ROOT::RNTupleParallelWriter::Recreate(CreateModel(),
+                                                           "Events", filename);
   }
 
   if (mode <= 0) {

@@ -20,8 +20,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-using ROOT::Experimental::RNTupleParallelWriter;
-
 static void CallFsync(const char *filename) {
   int fd = open(filename, O_RDWR);
   if (fd < 0 || fsync(fd)) {
@@ -88,8 +86,8 @@ int main(int argc, char *argv[]) {
   auto start = std::chrono::steady_clock::now();
 
   static constexpr const char *Filename = "random.root";
-  auto writer = RNTupleParallelWriter::Recreate(std::move(model), "random",
-                                                Filename, options);
+  auto writer = ROOT::RNTupleParallelWriter::Recreate(
+      std::move(model), "random", Filename, options);
   writer->EnableMetrics();
 
   // Use TThreadExecutor to start a function in parallel, all threads will write

@@ -20,8 +20,6 @@
 #include <string>
 #include <vector>
 
-using ROOT::Experimental::RNTupleParallelWriter;
-
 int main(int argc, char *argv[]) {
   int provided = -1;
   MPI_Init_thread(NULL, NULL, MPI_THREAD_FUNNELED, &provided);
@@ -95,8 +93,8 @@ int main(int argc, char *argv[]) {
   std::string url(dir);
   url += "/random." + std::to_string(rank) + ".root";
   std::unique_ptr<TFile> file(TFile::Open(url.c_str(), "RECREATE"));
-  auto writer =
-      RNTupleParallelWriter::Append(std::move(model), "random", *file, options);
+  auto writer = ROOT::RNTupleParallelWriter::Append(std::move(model), "random",
+                                                    *file, options);
   writer->EnableMetrics();
 
   auto rankStart = std::chrono::steady_clock::now();
