@@ -1,8 +1,9 @@
 #ifndef AOS_SOA_H
 #define AOS_SOA_H
 
+#include <ROOT/RVec.hxx>
+
 #include <cstdint>
-#include <vector>
 
 struct S {
   std::int32_t f1;
@@ -15,11 +16,11 @@ struct S {
 using AoS = std::vector<S>;
 
 struct SoA {
-  std::vector<std::int32_t> f1;
-  std::vector<std::int32_t> f2;
-  std::vector<std::int32_t> f3;
-  std::vector<std::int32_t> f4;
-  std::vector<std::int32_t> f5;
+  ROOT::RVec<std::int32_t> f1;
+  ROOT::RVec<std::int32_t> f2;
+  ROOT::RVec<std::int32_t> f3;
+  ROOT::RVec<std::int32_t> f4;
+  ROOT::RVec<std::int32_t> f5;
 };
 
 #include <type_traits>
