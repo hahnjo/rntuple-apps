@@ -129,29 +129,44 @@ int main(int argc, char *argv[]) {
   }
   std::cout << "\n";
 
-  std::cout << "Benchmarking (experimental) native SoA..." << std::endl;
-
-  // Mark the class as SoA with record type S
-  auto cl = TClass::GetClass("SoA");
-  cl->CreateAttributeMap();
-  cl->GetAttributeMap()->AddProperty("rntuple.SoARecord", "S");
-  {
-    // Create one RSoAField, which will print the warning about the experimental
-    // state.
-    ROOT::Experimental::RSoAField f("f", "SoA");
-  }
-
+  std::cout << "Benchmarking SoA of RVec..." << std::endl;
   for (std::size_t elements = MinElements; elements <= MaxElements;
        elements++) {
     std::cout << "  " << elements << " element(s):" << std::endl;
-    auto mod = [elements](SoA &soa) {
+    auto mod = [elements](SoRVec &soa) {
       soa.f1.resize(elements);
       soa.f2.resize(elements);
       soa.f3.resize(elements);
       soa.f4.resize(elements);
       soa.f5.resize(elements);
     };
-    Benchmark<SoA>("SoA", mod);
+    Benchmark<SoRVec>("SoRVec", mod);
+  }
+  std::cout << "\n";
+
+  std::cout << "Benchmarking (experimental) native SoA..." << std::endl;
+
+  // Mark the class as SoRVec with record type S
+  auto cl = TClass::GetClass("SoRVec");
+  cl->CreateAttributeMap();
+  cl->GetAttributeMap()->AddProperty("rntuple.SoARecord", "S");
+  {
+    // Create one RSoAField, which will print the warning about the experimental
+    // state.
+    ROOT::Experimental::RSoAField f("f", "SoRVec");
+  }
+
+  for (std::size_t elements = MinElements; elements <= MaxElements;
+       elements++) {
+    std::cout << "  " << elements << " element(s):" << std::endl;
+    auto mod = [elements](SoRVec &soa) {
+      soa.f1.resize(elements);
+      soa.f2.resize(elements);
+      soa.f3.resize(elements);
+      soa.f4.resize(elements);
+      soa.f5.resize(elements);
+    };
+    Benchmark<SoRVec>("SoRVec", mod);
   }
 
   return 0;
