@@ -5,6 +5,7 @@
 #include <ROOT/RNTupleModel.hxx>
 #include <ROOT/RNTupleParallelWriter.hxx>
 #include <ROOT/RNTupleReader.hxx>
+#include <ROOT/RNTupleWriteOptions.hxx>
 #include <ROOT/RNTupleWriter.hxx>
 #include <ROOT/RVec.hxx>
 #include <ROOT/TBufferMerger.hxx>
@@ -194,17 +195,23 @@ static void WriteOutput(const std::string &process,
   std::string filename = process + "." + variation + ".root";
   int fillWidth = log10(paths.size()) + 1;
 
+  static constexpr std::uint32_t Compression = 505;
+  auto options = ROOT::RNTupleWriteOptions();
+  options.SetCompression(Compression);
+
   std::mutex m;
   std::unique_ptr<ROOT::RNTupleWriter> writer;
   std::unique_ptr<ROOT::TBufferMerger> bufferMerger;
   std::unique_ptr<ROOT::RNTupleParallelWriter> parallelWriter;
   if (mode <= 1) {
-    writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events", filename);
+    writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events", filename,
+                                           options);
   } else if (mode == 3) {
-    bufferMerger.reset(new ROOT::TBufferMerger(filename.c_str()));
+    bufferMerger.reset(
+        new ROOT::TBufferMerger(filename.c_str(), "RECREATE", Compression));
   } else if (mode == 4) {
-    parallelWriter = ROOT::RNTupleParallelWriter::Recreate(CreateModel(),
-                                                           "Events", filename);
+    parallelWriter = ROOT::RNTupleParallelWriter::Recreate(
+        CreateModel(), "Events", filename, options);
   }
 
   if (mode <= 0) {
@@ -235,15 +242,15 @@ static void WriteOutput(const std::string &process,
           filename << std::setfill('0') << std::setw(fillWidth) << idx;
           filename << ".root";
           auto writer = ROOT::RNTupleWriter::Recreate(CreateModel(), "Events",
-                                                      filename.str());
+                                                      filename.str(), options);
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() { writer->Fill(*entry); });
           writer.reset();
           CallFsync(filename.str().c_str());
         } else if (mode == 3) {
           auto file = bufferMerger->GetFile();
-          auto writer =
-              ROOT::RNTupleWriter::Append(CreateModel(), "Events", *file);
+          auto writer = ROOT::RNTupleWriter::Append(CreateModel(), "Events",
+                                                    *file, options);
           auto entry = writer->CreateEntry();
           ProcessInput(path, entry, [&]() {
             writer->Fill(*entry);
@@ -260,8 +267,8 @@ static void WriteOutput(const std::string &process,
               // also call Write() and thereby trigger merging.
               writer.reset();
               // Create a new writer, appending to the now empty file.
-              writer =
-                  ROOT::RNTupleWriter::Append(CreateModel(), "Events", *file);
+              writer = ROOT::RNTupleWriter::Append(CreateModel(), "Events",
+                                                   *file, options);
               // Create a new enty and rewire all values from the old entry.
               auto newEntry = writer->GetModel().CreateBareEntry();
               for (auto &v : ptrs) {
