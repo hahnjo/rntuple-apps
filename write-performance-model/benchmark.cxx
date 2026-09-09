@@ -231,8 +231,20 @@ int main(int argc, char *argv[]) {
   static constexpr double ToUsPerFieldPerEntry = 1e6 / NumFields / NumEntries;
   double perByte = (int64.mean - int32.mean) / 4 * ToUsPerFieldPerEntry;
   double perByteError = CombineErrors(int64, int32) / 4 * ToUsPerFieldPerEntry;
+  double perByteTuple =
+      (tuple_int64.mean - tuple_int32.mean) / 4 * ToUsPerFieldPerEntry;
+  double perByteTupleError =
+      CombineErrors(tuple_int64, tuple_int32) / 4 * ToUsPerFieldPerEntry;
+  double perByteArray =
+      (array_int64.mean - array_int32.mean) / 4 * ToUsPerFieldPerEntry;
+  double perByteArrayError =
+      CombineErrors(array_int64, array_int32) / 4 * ToUsPerFieldPerEntry;
   std::cout << "  per byte: " << perByte << " us +- " << perByteError
             << " us\n";
+  std::cout << "    from std::tuple: " << perByteTuple << " us +- "
+            << perByteTupleError << " us\n";
+  std::cout << "    from std::array: " << perByteArray << " us +- "
+            << perByteArrayError << " us\n";
 
   double perRecord = (tuple_int32.mean - int32.mean) * ToUsPerFieldPerEntry;
   double perRecordError =
