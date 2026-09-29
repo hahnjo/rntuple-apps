@@ -175,50 +175,10 @@ int main(int argc, char *argv[]) {
     array_int64 = benchmark("std::array<std::int64_t, 1>", f);
   }
 
-  BenchmarkResult vector_tuple_int32_2;
+  BenchmarkResult tuple_int32_int32;
   {
-    using FieldType = std::vector<std::tuple<std::int32_t>>;
-    ROOT::RField<FieldType> f("vector_tuple_int32");
-    auto mod = [](void *ptr) { static_cast<FieldType *>(ptr)->resize(2); };
-    vector_tuple_int32_2 = benchmark(
-        "std::vector<std::tuple<std::int32_t>> with 2 elements", f, mod);
-  }
-  BenchmarkResult vector_tuple_int32_int32;
-  {
-    using FieldType = std::vector<std::tuple<std::int32_t, std::int32_t>>;
-    ROOT::RField<FieldType> f("vector_tuple_int32_int32");
-    auto mod = [](void *ptr) { static_cast<FieldType *>(ptr)->resize(1); };
-    vector_tuple_int32_int32 = benchmark(
-        "std::vector<std::tuple<std::int32_t, std::int32_t>> with 1 element", f,
-        mod);
-  }
-
-  BenchmarkResult tuple_vector_tuple_int32_2;
-  {
-    using FieldType = std::vector<std::tuple<std::int32_t>>;
-    ROOT::RField<std::tuple<FieldType>> f("tuple_vector_tuple_int32");
-    auto mod = [](void *ptr) { static_cast<FieldType *>(ptr)->resize(2); };
-    tuple_vector_tuple_int32_2 = benchmark(
-        "std::tuple<std::vector<std::tuple<std::int32_t>>> with 2 elements", f,
-        mod);
-  }
-  BenchmarkResult vector_tuple_tuple_int32_2;
-  {
-    using FieldType = std::vector<std::tuple<std::tuple<std::int32_t>>>;
-    ROOT::RField<FieldType> f("vector_tuple_tuple_int32");
-    auto mod = [](void *ptr) { static_cast<FieldType *>(ptr)->resize(2); };
-    vector_tuple_tuple_int32_2 = benchmark(
-        "std::vector<std::tuple<std::tuple<std::int32_t>>> with 2 elements", f,
-        mod);
-  }
-
-  BenchmarkResult vector_tuple_int64_1;
-  {
-    using FieldType = std::vector<std::tuple<std::int64_t>>;
-    ROOT::RField<FieldType> f("vector_tuple_int64");
-    auto mod = [](void *ptr) { static_cast<FieldType *>(ptr)->resize(1); };
-    vector_tuple_int64_1 = benchmark(
-        "std::vector<std::tuple<std::int64_t>> with 1 element", f, mod);
+    ROOT::RField<std::tuple<std::int32_t, std::int32_t>> f("tuple_int32_int32");
+    tuple_int32_int32 = benchmark("std::tuple<std::int32_t, std::int32_t>", f);
   }
 
   std::cout << "\n === SUMMARY ===\n";
@@ -252,18 +212,10 @@ int main(int argc, char *argv[]) {
   double perRecord64 = (tuple_int64.mean - int64.mean) * ToUsPerFieldPerEntry;
   double perRecord64Error =
       CombineErrors(tuple_int64, int64) * ToUsPerFieldPerEntry;
-  double perRecordVector =
-      (tuple_vector_tuple_int32_2.mean - vector_tuple_int32_2.mean) *
-      ToUsPerFieldPerEntry;
-  double perRecordVectorError =
-      CombineErrors(tuple_vector_tuple_int32_2, vector_tuple_int32_2) *
-      ToUsPerFieldPerEntry;
   std::cout << "  per record field: " << perRecord << " us +- "
             << perRecordError << " us\n";
   std::cout << "    from std::int64_t: " << perRecord64 << " us +- "
             << perRecord64Error << " us\n";
-  std::cout << "    from std::vector<std::tuple<std::int32_t>>: "
-            << perRecordVector << " us +- " << perRecordVectorError << " us\n";
 
   double perVector = (vector_int32_0.mean - int64.mean) * ToUsPerFieldPerEntry;
   double perVectorError =
@@ -284,31 +236,11 @@ int main(int argc, char *argv[]) {
             << perArray64Error << " us\n";
 
   double perColumn =
-      (vector_tuple_int32_int32.mean - vector_tuple_int32_2.mean) *
-      ToUsPerFieldPerEntry;
+      (tuple_int32_int32.mean - tuple_int64.mean) * ToUsPerFieldPerEntry;
   double perColumnError =
-      CombineErrors(vector_tuple_int32_int32, vector_tuple_int32_2) *
-      ToUsPerFieldPerEntry;
+      CombineErrors(tuple_int32_int32, tuple_int64) * ToUsPerFieldPerEntry;
   std::cout << "  per column: " << perColumn << " us +- " << perColumnError
             << " us\n";
-
-  double perRecordAppend =
-      (vector_tuple_tuple_int32_2.mean - tuple_vector_tuple_int32_2.mean) *
-      ToUsPerFieldPerEntry;
-  double perRecordAppendError =
-      CombineErrors(vector_tuple_tuple_int32_2, tuple_vector_tuple_int32_2) *
-      ToUsPerFieldPerEntry;
-  std::cout << "  per record field append: " << perRecordAppend << " us +- "
-            << perRecordAppendError << " us\n";
-
-  double perColumnAppend =
-      (vector_tuple_int32_2.mean - vector_tuple_int64_1.mean) *
-      ToUsPerFieldPerEntry;
-  double perColumnAppendError =
-      CombineErrors(vector_tuple_int32_2, vector_tuple_int64_1) *
-      ToUsPerFieldPerEntry;
-  std::cout << "  per column append: " << perColumnAppend << " us +- "
-            << perColumnAppendError << " us\n";
 
   return 0;
 }
