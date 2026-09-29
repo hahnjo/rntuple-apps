@@ -24,8 +24,7 @@ static constexpr std::size_t NumRepetitions = 10;
 static constexpr std::size_t NumFields = 1000;
 static constexpr std::size_t NumEntries = 1000000;
 
-static double RunBenchmark(const ROOT::RFieldBase &proto,
-                           std::function<void(void *)> mod = {}) {
+static double RunBenchmark(const ROOT::RFieldBase &proto) {
   // Wrap proto field in record field to "throw off" branch prediction a bit.
   std::vector<std::unique_ptr<ROOT::RFieldBase>> itemFields;
   itemFields.push_back(proto.Clone("_0"));
@@ -59,14 +58,7 @@ static double RunBenchmark(const ROOT::RFieldBase &proto,
       "null", options);
   auto writer =
       ROOT::Internal::CreateRNTupleWriter(std::move(model), std::move(sink));
-
-  // Prepare entry, potentially calling modification function.
   auto entry = writer->CreateEntry();
-  if (mod) {
-    for (std::size_t f = 0; f < NumFields; f++) {
-      mod(entry->GetPtr<void>("f" + std::to_string(f)).get());
-    }
-  }
 
   // Fill entries
   for (std::size_t i = 0; i < NumEntries; i++) {
@@ -89,12 +81,11 @@ struct BenchmarkResult {
   double stdev = 0;
 };
 
-static BenchmarkResult Benchmark(const ROOT::RFieldBase &proto,
-                                 std::function<void(void *)> mod = {}) {
+static BenchmarkResult Benchmark(const ROOT::RFieldBase &proto) {
   BenchmarkResult result;
   double sum = 0, sum2 = 0;
   for (std::size_t r = 0; r < NumRepetitions; r++) {
-    double timing = RunBenchmark(proto, mod);
+    double timing = RunBenchmark(proto);
     result.timings.push_back(timing);
     sum += timing;
     sum2 += timing * timing;
@@ -131,11 +122,10 @@ int main(int argc, char *argv[]) {
 
   std::vector<std::pair<std::string, BenchmarkResult>> results;
   auto benchmark = [&results](std::string_view label,
-                              const ROOT::RFieldBase &proto,
-                              std::function<void(void *)> mod = {}) {
+                              const ROOT::RFieldBase &proto) {
     std::cout << "Benchmarking " << label << " ...\n";
     std::cout << std::flush;
-    auto result = Benchmark(proto, mod);
+    auto result = Benchmark(proto);
     results.emplace_back(label, result);
     PrintTimings(result);
     std::cout << std::flush;
